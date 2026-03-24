@@ -1,8 +1,4 @@
-neo4j>=5.0
-requests
-beautifulsoup4
-sentence-transformers
-networkx
-torch
-torch-geometric
-tqdm
+﻿neo4j>=5.0
+torch>=2.0
+torch-geometric>=2.4
+typing_extensions>=4.8
