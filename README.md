@@ -1,61 +1,59 @@
-# The Structural Coder
-**Graph-Augmented Retrieval for Idiomatic PyTorch 2.x Code Generation**
+﻿# Mohit's GNN Encoder
 
-Solves the "version-hallucination" problem in LLM code generation by using a Knowledge Graph of the PyTorch 2.x API to guide a Transformer-based generator toward modern, idiomatic syntax.
+This folder is now notebook-first to match the rest of the project.
 
----
+Main file:
 
-## What's in here
+- `gnn_encoder.ipynb`
 
-| File | What it does |
-|------|-------------|
-| `web_crawler.ipynb` | Crawls `docs.pytorch.org/docs/stable/` via BFS, extracts API entities, code snippets, and concept text, writes everything to Neo4j |
-| `creating_embed.ipynb` | Pulls all 24,485 nodes from Neo4j, encodes each with `all-MiniLM-L6-v2` (384-dim), writes embeddings back to Neo4j |
-| `nodes.csv` | Exported snapshot of all graph nodes |
-| `edges.csv` | Exported snapshot of all graph relationships |
-| `index.html` | PyTorch 2.10 docs index — used by the crawler to seed the BFS queue |
+## What The Notebook Covers
 
----
+The notebook does the full GNN part end to end:
 
-## Knowledge Graph
+1. pulls the knowledge graph and node embeddings from Neo4j
+2. converts the graph into `torch_geometric.data.HeteroData`
+3. trains a heterogeneous GNN with self-supervised link prediction
+4. evaluates the trained model
+5. exports graph-aware node embeddings
+6. optionally writes those new embeddings back to Neo4j as `gnn_embedding`
 
-Built from the full PyTorch 2.10 stable documentation.
+## Important Idea
 
-| Stat | Value |
-|------|-------|
-| Nodes | 24,485 |
-| Relationships | 47,958 |
-| Embedding dim | 384 |
-| Embedding model | `all-MiniLM-L6-v2` |
+The original MiniLM embeddings are the input node features.
 
-**Node types:** `API_Function`, `API_Class`, `API_Method`, `API_Parameter`,
-`API_Endpoint`, `CodeSnippet`, `Concept`, `DeprecatedAPI`, `PyTorchConcept`
+They do not need to be overwritten.
 
-**Edge types:** `CONTAINS`, `CALLS`, `INHERITS`, `HAS_PARAM`, `IMPLEMENTS`, `EXPLAINS`, `REPLACES`, `REFERENCES`, `RELATED_TO`
+The GNN learns a new embedding on top of them:
 
----
-
-## Reproducing the graph
-
-**Requirements**
-```
-neo4j>=5.0
-requests
-beautifulsoup4
-sentence-transformers
+```text
+x = original text embedding
+z = GNN(x, graph)
 ```
 
-**Steps**
-1. Start Neo4j at `bolt://localhost:7687`
-2. Run `web_crawler.ipynb` to populate the DB
-3. Run `creating _embed.ipynb` to compute node embeddings
+Best practice:
 
----
+- keep the original Neo4j property as `embedding`
+- store the trained graph-aware vectors as `gnn_embedding`
 
-## Status
+## Setup
 
-- [x] Knowledge Graph construction
-- [x] Node embeddings
-- [ ] GNN encoder
-- [ ] Graph-RAG retriever
-- [ ] Code generator integration
+Install the dependencies for this folder with:
+
+`pip install -r requirements.txt`
+
+## Output Files
+
+After running the notebook, the main outputs are:
+
+- `outputs/hetero_graph.pt`
+- `outputs/hetero_metadata.json`
+- `outputs/train_graph.pt`
+- `outputs/split_state.pt`
+- `outputs/best_model.pt`
+- `outputs/training_summary.json`
+- `outputs/gnn_embeddings.jsonl`
+- `outputs/gnn_embeddings.pt`
+
+## Short Team Explanation
+
+The knowledge graph and initial text embeddings were already built by the previous stage. This notebook trains a heterogeneous GNN on that Neo4j graph and produces graph-aware embeddings for the later Graph-RAG retrieval stage.
