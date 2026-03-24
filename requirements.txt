@@ -1,8 +1,11 @@
-neo4j>=5.0
-requests
-beautifulsoup4
-sentence-transformers
-networkx
-torch
-torch-geometric
-tqdm
+# Core runtime dependencies for Structural-Coder pipeline
+torch>=2.2
+
+# Optional (legacy notebook/crawler workflows)
+# neo4j>=5.0
+# requests
+# beautifulsoup4
+# sentence-transformers
+# networkx
+# torch-geometric
+# tqdm
