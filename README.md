@@ -1,87 +1,101 @@
-# Structural-Coder
+# Graph-RAG Retriever for PyTorch 2.x API Grounding
 
-Graph-RAG code generation for PyTorch 2.x with active validation.
+A Graph-RAG (Retrieval-Augmented Generation) retriever that finds relevant PyTorch API symbols from a knowledge graph using GNN-learned embeddings and hybrid ranking.
 
-This repository reduces version-hallucination by grounding generation in a
-PyTorch knowledge graph and validating generated code before use.
+## How It Works
 
-## What This Project Does
-
-1. Loads graph data from `nodes.csv` and `edges.csv`.
-2. Builds or loads GNN-based node embeddings.
-3. Retrieves graph context for a query.
-4. Generates PyTorch 2.x style code from retrieved context.
-5. Runs active checks (C0, C1, C2, C3, C5).
-
-## Clean Folder Layout
-
-```text
-Structural-Coder/
-  src/
-    graph_rag/                # Graph-RAG pipeline (embed, retrieve, generate)
-    integration_pipeline/     # Validator + combined retrieval/repair pipeline
-  benchmarks_downloads/       # Benchmark source folders and smoke runner
-  datasets/                   # Query lists and benchmark-derived query files
-  outputs/                    # Generated code, run JSONs, benchmark summaries
-  artifacts/                  # Embedding cache and training artifacts
-  docs/                       # Focused documentation
-  run_graph_rag_pipeline.py   # Main Graph-RAG CLI
-  run_combined_pipeline.py    # Retrieval + validation/repair CLI
-  nodes.csv                   # Graph nodes snapshot
-  edges.csv                   # Graph edges snapshot
+```
+Query: "compile-safe transformer block"
+                │
+                ▼
+┌──────────────────────────────────┐
+│  1. Seed Selection               │  Find starting nodes via embedding similarity
+│  2. Graph Expansion              │  Walk outward through edges to discover neighbors
+│  3. Hybrid Ranking               │  Score candidates: GNN + lexical + degree
+└──────────────────────────────────┘
+                │
+                ▼
+Output: ranked list of PyTorch API symbols
+        (Transformer, torch.compile, torch.nn.Linear, ...)
 ```
 
-## Core Files
+## Project Structure
 
-- `src/graph_rag/gnn_encoder.py`: Graph tensor building + GraphSAGE-style training.
-- `src/graph_rag/retriever.py`: Hybrid retrieval from graph structure + embeddings.
-- `src/graph_rag/generator.py`: Retrieval-grounded code generation bridge.
-- `src/graph_rag/pipeline.py`: End-to-end Graph-RAG orchestration.
-- `src/integration_pipeline/validator.py`: Active validation checks and C5 handling.
-- `benchmarks_downloads/run_benchmark_smoke.py`: Smoke benchmark runner + summary output.
+```
+Structural-Coder/
+  run_graph_rag_pipeline.py     ← CLI entry point
+  nodes.csv                     ← Knowledge graph nodes (PyTorch APIs)
+  edges.csv                     ← Knowledge graph edges (relationships)
+  requirements.txt              ← Python dependencies
+  src/
+    graph_rag/
+      graph_loader.py           ← CSV → graph data structure
+      gnn_encoder.py            ← GNN training + embedding cache
+      retriever.py              ← Core retrieval algorithm
+      pipeline.py               ← Orchestrates everything
+  tests/
+    test_graph_rag.py           ← 18 automated tests
+```
 
 ## Quick Start
 
 ```bash
-cd "/Volumes/Extreme SSD/tdl project/Structural-Coder"
-source ../.venv/bin/activate
-```
+# 1. Activate virtual environment
+source .venv/bin/activate    # or your venv path
 
-Run Graph-RAG:
+# 2. Install dependencies
+pip install torch>=2.2
 
-```bash
+# 3. Run with local GNN training
 python3 run_graph_rag_pipeline.py \
+  --allow-csv-gnn-training \
   --query "compile-safe transformer block" \
-  --output-json outputs/graph_rag_run.json \
-  --output-code outputs/graph_rag_run.py
+  --output-json outputs/result.json
+
+# 4. Or run with external pre-trained embeddings
+python3 run_graph_rag_pipeline.py \
+  --external-embeddings path/to/gnn_embeddings.json \
+  --query "compile-safe transformer block" \
+  --output-json outputs/result.json
 ```
 
-Run smoke benchmarks:
+## Example Output
+
+```json
+{
+  "query": "compile-safe transformer block",
+  "seed_nodes": ["Transformer", "BlockingAsyncStager", "blocked_autorange"],
+  "retrieved_symbols": ["Transformer", "torch.compile", "torch.nn.Linear", "..."],
+  "retrieved_nodes": 20,
+  "retrieved_edges": 74
+}
+```
+
+## Running Tests
 
 ```bash
-python3 benchmarks_downloads/run_benchmark_smoke.py --smoke-n 5
+pip install pytest
+python -m pytest tests/test_graph_rag.py -v
 ```
 
-Check smoke summary:
+## Architecture
 
-```bash
-cat outputs/benchmarks_smoke/summary.json
-```
+| Component | File | Purpose |
+|-----------|------|---------|
+| Graph Loader | `graph_loader.py` | Reads `nodes.csv`/`edges.csv` into a graph with adjacency lists |
+| GNN Encoder | `gnn_encoder.py` | Trains a 2-layer GraphSAGE encoder via link prediction |
+| Retriever | `retriever.py` | Seed selection → graph expansion → hybrid ranking |
+| Pipeline | `pipeline.py` | Orchestrates load → embed → retrieve → output |
+| CLI | `run_graph_rag_pipeline.py` | Terminal interface with all configuration flags |
 
-## Validation Levels
+## Key Design Decisions
 
-- `C0`: syntax/import/static symbol checks.
-- `C1`: CUDA guard and CPU fallback checks.
-- `C2`: target hardware path alignment checks.
-- `C3`: runtime torch availability check.
-- `C5`: compile-safety probe (reports pass/fail/skipped status).
+- **Two embedding spaces**: Hash-bag vectors for seed selection (same space as queries) + GNN vectors for re-ranking (captures graph structure)
+- **Cache versioning**: Embedding cache includes a SHA-256 hash of the CSV files — stale caches auto-retrain
+- **Binary `.pt` format**: Embeddings saved as PyTorch binary (~57% smaller, ~10× faster than JSON)
+- **Configurable ranking**: `RankingWeights` dataclass lets you tune GNN vs lexical vs degree weights
 
-The smoke summary reports both:
+## Team
 
-- `smoke_validation_passed_with_skips`
-- `smoke_validation_passed_strict`
-
-## Notes
-
-- Some benchmark families may remain unavailable in `downloaded` depending on access.
-- Generated files in `outputs/` are run artifacts and can be regenerated anytime.
+- **Amitesh** — Graph-RAG Retriever (this module)
+- **Mohit** — GNN Encoder (Neo4j + torch_geometric training)
