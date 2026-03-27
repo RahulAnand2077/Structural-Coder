@@ -1,101 +1,143 @@
-# Graph-RAG Retriever for PyTorch 2.x API Grounding
+# 🧠 Structural-Coder-Amitesh
+### A Smart PyTorch Code Generator powered by a Knowledge Graph + AI
 
-A Graph-RAG (Retrieval-Augmented Generation) retriever that finds relevant PyTorch API symbols from a knowledge graph using GNN-learned embeddings and hybrid ranking.
+---
 
-## How It Works
+## 🤔 What is this project? (For a complete beginner)
+
+Imagine you want to write PyTorch code (a popular AI framework) but you don't know which
+exact function names, parameters, or class names to use. Normally you would:
+1. Search Google/Stack Overflow
+2. Read 10 different documentation pages
+3. Try-and-fail many times
+
+**This project does all of that FOR YOU — automatically.**
+
+It uses a massive **knowledge graph** (a database of 24,485 PyTorch API concepts and 47,958
+connections between them) to find the most relevant code building blocks for any question
+you ask, and then assembles them into working, validated code.
+
+---
+
+## 🆚 How Are We Better Than a Regular AI Chatbot (e.g. llama3.2)?
+
+| Feature | Structural-Coder (Ours) | Standalone AI (e.g. llama3.2) |
+|---------|------------------------|-------------------------------|
+| Uses a structured PyTorch knowledge graph | ✅ Yes — 24K nodes, 47K edges | ❌ No |
+| Grounded in real API symbols | ✅ Always | ❌ Often hallucinates |
+| Validates generated code (C0–C5 checks) | ✅ Automatic | ❌ Never |
+| Graph Neural Network (GNN) for smart search | ✅ Yes | ❌ No |
+| **Benchmark Result (avg final score)** | **🏆 0.75** | **0.24** |
+
+We **won all 10 out of 10** benchmark queries against llama3.2.
+
+---
+
+## 📁 Folder Structure at a Glance
 
 ```
-Query: "compile-safe transformer block"
-                │
-                ▼
-┌──────────────────────────────────┐
-│  1. Seed Selection               │  Find starting nodes via embedding similarity
-│  2. Graph Expansion              │  Walk outward through edges to discover neighbors
-│  3. Hybrid Ranking               │  Score candidates: GNN + lexical + degree
-└──────────────────────────────────┘
-                │
-                ▼
-Output: ranked list of PyTorch API symbols
-        (Transformer, torch.compile, torch.nn.Linear, ...)
+Structural-Coder-Amitesh/
+│
+├── README.md                   ← You are here
+├── requirements.txt            ← Python packages needed
+│
+├── data/                       ← The PyTorch knowledge graph database
+│   ├── nodes.csv               ← 24,485 PyTorch API concepts
+│   └── edges.csv               ← 47,958 connections between concepts
+│
+├── src/                        ← All Python source code
+│   ├── graph_rag/              ← Core Graph-RAG retrieval engine
+│   ├── integration_pipeline/   ← Validation + self-healing
+│   └── research_pipeline/      ← Orchestrator (runs everything together)
+│
+├── benchmark/                  ← Proof that our system beats LLMs
+│   ├── run_comparison.py       ← Script to run the benchmark
+│   ├── queries/                ← 10 test questions
+│   └── outputs/                ← Live comparison results
+│
+├── scripts/                    ← Entry-point runner scripts
+│   ├── run_graph_rag_pipeline.py
+│   └── run_research_pipeline.py
+│
+├── notebooks/                  ← Jupyter notebooks (experiments / exploration)
+├── artifacts/                  ← Saved GNN embeddings (model weights)
+├── configs/                    ← Configuration files
+└── tests/                      ← Automated tests
 ```
 
-## Project Structure
+---
 
-```
-Structural-Coder/
-  run_graph_rag_pipeline.py     ← CLI entry point
-  nodes.csv                     ← Knowledge graph nodes (PyTorch APIs)
-  edges.csv                     ← Knowledge graph edges (relationships)
-  requirements.txt              ← Python dependencies
-  src/
-    graph_rag/
-      graph_loader.py           ← CSV → graph data structure
-      gnn_encoder.py            ← GNN training + embedding cache
-      retriever.py              ← Core retrieval algorithm
-      pipeline.py               ← Orchestrates everything
-  tests/
-    test_graph_rag.py           ← 18 automated tests
-```
+## 🚀 How to Run (Step by Step)
 
-## Quick Start
-
+### Step 1 — Install dependencies
 ```bash
-# 1. Activate virtual environment
-source .venv/bin/activate    # or your venv path
-
-# 2. Install dependencies
-pip install torch>=2.2
-
-# 3. Run with local GNN training
-python3 run_graph_rag_pipeline.py \
-  --allow-csv-gnn-training \
-  --query "compile-safe transformer block" \
-  --output-json outputs/result.json
-
-# 4. Or run with external pre-trained embeddings
-python3 run_graph_rag_pipeline.py \
-  --external-embeddings path/to/gnn_embeddings.json \
-  --query "compile-safe transformer block" \
-  --output-json outputs/result.json
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Example Output
-
-```json
-{
-  "query": "compile-safe transformer block",
-  "seed_nodes": ["Transformer", "BlockingAsyncStager", "blocked_autorange"],
-  "retrieved_symbols": ["Transformer", "torch.compile", "torch.nn.Linear", "..."],
-  "retrieved_nodes": 20,
-  "retrieved_edges": 74
-}
-```
-
-## Running Tests
-
+### Step 2 — Run the full pipeline (retrieve + generate code)
 ```bash
-pip install pytest
-python -m pytest tests/test_graph_rag.py -v
+python scripts/run_research_pipeline.py \
+  --nodes data/nodes.csv \
+  --edges data/edges.csv \
+  --query "compile-safe transformer block"
 ```
 
-## Architecture
+### Step 3 — Run the Interactive Side-by-Side Tester
+```bash
+# First make sure Ollama is running in the background:  ollama serve
+# Then run the interactive comparison tool:
+python benchmark/interactive_comparison.py
+```
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| Graph Loader | `graph_loader.py` | Reads `nodes.csv`/`edges.csv` into a graph with adjacency lists |
-| GNN Encoder | `gnn_encoder.py` | Trains a 2-layer GraphSAGE encoder via link prediction |
-| Retriever | `retriever.py` | Seed selection → graph expansion → hybrid ranking |
-| Pipeline | `pipeline.py` | Orchestrates load → embed → retrieve → output |
-| CLI | `run_graph_rag_pipeline.py` | Terminal interface with all configuration flags |
+### Step 4 — Run the Automated Batch Benchmark (Full Report)
+```bash
+python benchmark/run_comparison.py --models llama3.2
+```
 
-## Key Design Decisions
+---
 
-- **Two embedding spaces**: Hash-bag vectors for seed selection (same space as queries) + GNN vectors for re-ranking (captures graph structure)
-- **Cache versioning**: Embedding cache includes a SHA-256 hash of the CSV files — stale caches auto-retrain
-- **Binary `.pt` format**: Embeddings saved as PyTorch binary (~57% smaller, ~10× faster than JSON)
-- **Configurable ranking**: `RankingWeights` dataclass lets you tune GNN vs lexical vs degree weights
+## 🔬 How It Works (10 Second Explanation)
 
-## Team
+```
+Your Question
+    │
+    ▼
+[GNN Retriever] — searches 24K PyTorch concepts using a Graph Neural Network
+    │
+    ▼
+[Knowledge Graph Expansion] — finds related concepts by following edges
+    │
+    ▼
+[Code Scaffolding] — assembles retrieved symbols into working code pattern
+    │
+    ▼
+[Active Validator] — runs 6 checks (C0–C5) to verify the code is correct
+    │
+    ▼
+✅ Valid, Grounded PyTorch Code
+```
 
-- **Amitesh** — Graph-RAG Retriever (this module)
-- **Mohit** — GNN Encoder (Neo4j + torch_geometric training)
+---
+
+## 📊 Benchmark Results (Real Run vs llama3.2)
+
+| System | Avg Grounding | Avg Validity | **Avg Score** |
+|--------|-------------|------------|------------|
+| 🏆 **Structural-Coder (Ours)** | 0.60 | 0.80 | **0.75** |
+| llama3.2 (Standalone) | 0.03 | 0.78 | 0.24 |
+
+See `benchmark/outputs/comparison_report.md` for full per-query details.
+
+---
+
+## 👤 Author
+
+**Amitesh Sinha** — Project Structural-Coder-Amitesh
+
+
+---
+### 💡 Architectural Note: Decoupled GNN & Pipeline
+Please note that the **GNN Coder (Retriever)** and the **Integration Pipeline** are strictly decoupled. 
+Any changes, experiments, or updates made to the GNN Coder (such as changing embedding dimensions, training algorithms, or node attributes) will **not** break the core pipeline. The pipeline simply consumes the resulting `research_gnn_embeddings.json` artifact, guaranteeing the system remains perfectly intact and modular.

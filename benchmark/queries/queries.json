@@ -1,0 +1,12 @@
+[
+  "compile-safe transformer block",
+  "automatic mixed precision training loop with grad scaler",
+  "cuda availability guarded training loop",
+  "flash attention with fallback",
+  "pytorch 2 dynamic shapes",
+  "fsdp fully sharded data parallel setup",
+  "aot autograd custom compiler backend",
+  "export to onnx model",
+  "gradient checkpointing for large models",
+  "distributed tensor parallelism"
+]

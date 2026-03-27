@@ -1,0 +1,109 @@
+══════════════════════════════════════════════════════════════════════════════════
+  STRUCTURAL-CODER (Graph-RAG) vs Standalone Ollama Models
+══════════════════════════════════════════════════════════════════════════════════
+  Queries  : 10
+  Opponents: llama3:70b
+══════════════════════════════════════════════════════════════════════════════════
+
+[Step 1] Loading graph and training GNN embeddings…
+         GNN training done in 5.2s.
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "compile-safe transformer block"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      0.42 │     0.80 │   0.49 │    1.2s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "automatic mixed precision training loop with grad scaler"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      1.00 │     0.80 │   0.54 │    0.9s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "cuda availability guarded training loop"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      0.50 │     0.80 │   0.51 │    1.0s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "flash attention with fallback"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      0.42 │     0.80 │   0.73 │    1.0s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "pytorch 2 dynamic shapes"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      1.00 │     0.80 │   0.96 │    1.1s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "fsdp fully sharded data parallel setup"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      0.42 │     0.80 │   0.99 │    0.9s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "aot autograd custom compiler backend"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      0.42 │     0.80 │   0.79 │    0.8s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "export to onnx model"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      0.42 │     0.80 │   0.86 │    0.8s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "gradient checkpointing for large models"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      1.00 │     0.80 │   0.54 │    0.9s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+══════════════════════════════════════════════════════════════════════════════════
+  Query: "distributed tensor parallelism"
+══════════════════════════════════════════════════════════════════════════════════
+  Model              │ Mode               │ Grounding │ Validity │  Final │ Latency
+  ──────────────────┼────────────────────┼───────────┼──────────┼────────┼────────
+  Structural-Coder   │ Ours (Graph-RAG)   │      0.42 │     0.80 │   1.09 │    0.9s
+  llama3:70b         │ Standalone LLM     │      0.00 │     0.60 │   0.18 │    0.0s
+
+
+══════════════════════════════════════════════════════════════════════════════════
+  SUMMARY — Average scores across all queries
+══════════════════════════════════════════════════════════════════════════════════
+  System                         │   Grnd │  Valid │  Final
+  ──────────────────────────────┼────────┼────────┼────────
+  Structural-Coder (Ours (Graph-RAG)) │   0.60 │   0.80 │   0.75
+  llama3:70b (Standalone LLM)    │   0.00 │   0.60 │   0.18
+══════════════════════════════════════════════════════════════════════════════════
+
+  WIN / LOSS (Ours vs each Ollama model)
+  Opponent             │ Ours Win │  Opp Win │   Tie
+  ────────────────────┼──────────┼──────────┼───────
+  llama3:70b           │       10 │        0 │     0
+══════════════════════════════════════════════════════════════════════════════════
+
+  Saved JSON : /Volumes/Extreme SSD/tdl project/Structural-Coder-Amitesh/benchmark/outputs/comparison.json
+  Saved Report: /Volumes/Extreme SSD/tdl project/Structural-Coder-Amitesh/benchmark/outputs/comparison_report.md
+
