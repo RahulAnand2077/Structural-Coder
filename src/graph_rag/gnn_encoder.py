@@ -210,17 +210,69 @@ def build_graph_tensor_data(
         hetero_to_id=hetero_to_id
     )
 
+DEFAULT_SUPERVISION_RELATIONS = {
+    "IMPLEMENTS", "CONTAINS", "HAS_PARAM", "CALLS", "RELATED_TO", "REPLACES",
+}
+
+def sample_hard_negative_edges(
+    edge_index: torch.Tensor,
+    num_dst_nodes: int,
+    num_samples: int,
+) -> torch.Tensor:
+    if num_samples <= 0 or edge_index.size(1) == 0:
+        return torch.empty((2, 0), dtype=torch.long)
+
+    pos_set = set(zip(edge_index[0].tolist(), edge_index[1].tolist()))
+    dst_indices = edge_index[1]
+    degrees = torch.bincount(dst_indices, minlength=num_dst_nodes).float() + 1.0
+    weights = degrees ** 0.75
+    probs = weights / weights.sum()
+
+    collected_src = []
+    collected_dst = []
+    oversample_factor = 3
+    repeats = (num_samples * oversample_factor // edge_index.size(1)) + 1
+    src_pool = edge_index[0].repeat(repeats)
+
+    for _ in range(5):
+        remaining = num_samples - len(collected_src)
+        if remaining <= 0:
+            break
+        neg_dsts = torch.multinomial(probs, remaining * oversample_factor, replacement=True)
+        srcs = src_pool[:len(neg_dsts)]
+        for s, d in zip(srcs.tolist(), neg_dsts.tolist()):
+            if (s, d) not in pos_set:
+                collected_src.append(s)
+                collected_dst.append(d)
+            if len(collected_src) >= num_samples:
+                break
+
+    if not collected_src:
+        return torch.empty((2, 0), dtype=torch.long)
+
+    src_t = torch.tensor(collected_src[:num_samples], dtype=torch.long)
+    dst_t = torch.tensor(collected_dst[:num_samples], dtype=torch.long)
+    return torch.stack([src_t, dst_t], dim=0)
+
 def train_gnn_embeddings(
     data: GraphTensorData,
     hidden_dim: int = 128,
     out_dim: int = 96,
-    epochs: int = 10,  # HGT overfits fast on tiny datasets, lower epochs
+    epochs: int = 15,
     lr: float = 1e-3,
     seed: int = 42,
 ) -> tuple[nn.Module, torch.Tensor]:
     torch.manual_seed(seed)
     hdata = data.hetero_data
     metadata = hdata.metadata()
+
+    # Isolate supervision relations to prevent structural bleed
+    supervised_edge_types = [
+        et for et in metadata[1]
+        if et[1] in DEFAULT_SUPERVISION_RELATIONS
+    ]
+    if not supervised_edge_types:
+        supervised_edge_types = metadata[1]
     
     encoder = HeteroGraphEncoder(
         metadata=metadata, 
@@ -228,7 +280,7 @@ def train_gnn_embeddings(
         hidden_channels=hidden_dim, 
         out_channels=out_dim
     )
-    predictor = LowRankBilinearDecoder(edge_types=metadata[1], embedding_dim=out_dim)
+    predictor = LowRankBilinearDecoder(edge_types=supervised_edge_types, embedding_dim=out_dim)
     optimizer = torch.optim.Adam(list(encoder.parameters()) + list(predictor.parameters()), lr=lr)
 
     for _ in range(max(1, epochs)):
@@ -237,24 +289,30 @@ def train_gnn_embeddings(
         z_dict = encoder(hdata.x_dict, hdata.edge_index_dict)
         
         loss = 0.0
-        for edge_type in metadata[1]:
+        for edge_type in supervised_edge_types:
             ei = hdata[edge_type].edge_index
             if ei.size(1) == 0:
                 continue
             
-            # Simple contrastive setup
+            # Predict positive edges
             pos_logits = predictor(z_dict, edge_type, ei)
-            # Random negative destinations
-            neg_dst = torch.randint(0, z_dict[edge_type[2]].size(0), (ei.size(1),))
-            neg_ei = torch.stack([ei[0], neg_dst], dim=0)
-            neg_logits = predictor(z_dict, edge_type, neg_ei)
-
-            pos_loss = F.binary_cross_entropy_with_logits(pos_logits, torch.ones_like(pos_logits))
-            neg_loss = F.binary_cross_entropy_with_logits(neg_logits, torch.zeros_like(neg_logits))
-            loss += pos_loss + neg_loss
+            
+            # True-positive filtered hard negative sampling
+            num_dst = z_dict[edge_type[2]].size(0)
+            neg_ei = sample_hard_negative_edges(ei, num_dst, ei.size(1))
+            
+            if neg_ei.size(1) > 0:
+                neg_ei = neg_ei.to(ei.device)
+                neg_logits = predictor(z_dict, edge_type, neg_ei)
+                pos_loss = F.binary_cross_entropy_with_logits(pos_logits, torch.ones_like(pos_logits))
+                neg_loss = F.binary_cross_entropy_with_logits(neg_logits, torch.zeros_like(neg_logits))
+                loss += pos_loss + neg_loss
+            else:
+                loss += F.binary_cross_entropy_with_logits(pos_logits, torch.ones_like(pos_logits))
             
         if hasattr(loss, "backward"):
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=2.0)
             optimizer.step()
 
     encoder.eval()
