@@ -7,16 +7,7 @@ These are the **main scripts** you run to use the system. Think of them as the
 
 ## Scripts
 
-### `run_graph_rag_pipeline.py` — Retrieve + Generate
 
-Runs the core retrieval pipeline and outputs a list of the most relevant PyTorch
-API symbols for any query.
-
-```bash
-python scripts/run_graph_rag_pipeline.py \
-  --nodes data/nodes.csv \
-  --edges data/edges.csv
-```
 
 ### `run_research_pipeline.py` — Full Research Experiment
 

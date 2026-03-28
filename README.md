@@ -81,13 +81,7 @@ python benchmark/interactive_comparison.py
 python benchmark/run_comparison.py --models llama3.2
 ```
 
-### Step 5 — Run the full research pipeline on a custom query
-```bash
-python run_graph_rag_pipeline.py \
-  --nodes data/nodes.csv \
-  --edges data/edges.csv \
-  --query "compile-safe transformer block"
-```
+
 
 ---
 

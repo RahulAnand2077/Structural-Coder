@@ -16,29 +16,19 @@ like llama3.2, codellama, etc. that you can download and run locally.
 
 ---
 
-## 🧮 How the Evaluation Metrics Work (Mathematical Deep Dive)
+## 🧮 How the Scoring Works
 
-The `interactive_comparison.py` and batch benchmarking suite do not rely on subjective "LLM-as-a-judge" evaluation. Instead, they run an exact mathematical and syntactic compilation engine on the generated code.
+Each answer is graded on three things:
 
-Each answer is graded across 4 strict mathematical vectors:
+| Metric | Meaning | Max Score |
+|--------|---------|-----------|
+| **Retrieval** | Did we find relevant PyTorch APIs? | 1.0 |
+| **Grounding** | Did the answer actually USE those APIs? | 1.0 |
+| **Validity** | Does the code pass all 6 safety checks? | 1.0 |
+| **Final** | `0.4×retrieval + 0.6×(0.5×grounding + 0.5×validity)` | 1.0 |
 
-### 1. Retrieval Score (Token Coverage Mapping) `[max 1.0]`
-The pipeline evaluates whether the Graph Neural Network correctly fetched APIs that linguistically map to the prompt's token requirements. For the Standalone LLM, this is always `0.0` (as it has no retrieval). If the GNN fetches a node matching 100% of the relevant tokens, it scores 1.0.
-
-### 2. AST Grounding Score (Namespace Base Matching) `[max 1.0]`
-Did the LLM *actually use* the graph's blueprints? The Grounding engine extracts the top 12 retrieved PyTorch nodes, strips them down to their namespace base function (e.g., converting `torch.distributed.fsdp.FullyShardedDataParallel` down to `FullyShardedDataParallel`), and actively rips through the generated code to verify usage.
-If the LLM utilizes an aliased Python import (`from torch import einsum`), the engine specifically parses the `einsum` base method and mathematically awards a 100% execution score, preventing strict substring false-negatives.
-
-### 3. Syntax Validity Score (AST Compiler Checks) `[max 1.0]`
-The evaluation pipeline physically extracts the generated code snippet using regex matching and parses it through Python's intrinsic `ast` (Abstract Syntax Tree) compiler.
-It executes 6 rigid safety protocols:
-- **C0**: Raw Python AST Parsing (Catches syntax errors, bracket mismatches)
-- **C1**: Top-Level Function/Class constraints
-- **C2 - C5**: Active Hardware Targeting Verification (FSL metrics, Target CUDA constraints like checking for `@torch.compile` decorators)
-
-### 4. Final Aggregated Score `[max 1.0]`
-The ultimate grade is weighted to strictly prioritize execution safety over retrieval capacity:
-**`Final = 0.4×Retrieval + 0.6×(0.5×Grounding + 0.5×Validity)`**
+> **Important**: For the standalone LLM (llama3.2), retrieval = 0 because it cannot
+> search any graph. It only knows what was in its training data.
 
 ---
 

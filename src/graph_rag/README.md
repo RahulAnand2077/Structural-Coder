@@ -8,11 +8,8 @@ This module is the **brain** of the system. It uses a **Heterogeneous Graph Neur
 
 | File | What It Does |
 |------|--------------|
-| `graph_loader.py` | Reads `nodes.csv` + `edges.csv` and builds the graph in memory |
 | `gnn_encoder.py` | Trains the Heterogeneous GNN (HGTConv) to give every node a smart embedding |
 | `retriever.py` | Uses those embeddings to find nodes closest to your question |
-| `pipeline.py` | Runs all steps in the correct order |
-| `generator.py` | Converts retrieved nodes into a code answer |
 
 ---
 
