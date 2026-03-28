@@ -18,17 +18,23 @@ then following connections to discover related concepts.
 
 ---
 
-## 🧠 How the Graph Neural Network (GNN) Works
+## 🧠 How the Heterogeneous GNN Works (HGTConv)
 
-Imagine every PyTorch function (`torch.compile`, `nn.TransformerEncoder`, etc.) as
-a person. People who work together closely become more similar over time.
+Our system uses a **Heterogeneous Graph Transformer (HGTConv)** to learn highly sophisticated, graph-aware embeddings (fingerprints) for all 24,000 PyTorch nodes.
 
-The GNN does exactly that:
-1. Starts with a rough description (a "hash bag") for each node
-2. Passes messages along edges (e.g., "TransformerEncoder CALLS TransformerEncoderLayer")
-3. After training, nodes that are semantically connected have similar vector embeddings
+### 🧬 Breaking Down "Heterogeneous"
+Traditional GNNs (like GraphSAGE) treat every node and edge exactly the same. Our network respects the **schema** of the PyTorch ecosystem. It maintains distinct neural weights depending on whether a node is a `Concept`, `API_Function`, or `CodeSnippet`, and uniquely routes messages across specific relationships (e.g., `IMPLEMENTS`, `CALLS`, `HAS_PARAM`).
 
-This allows us to search by **meaning**, not just keywords.
+### ⚙️ The Mathematical Training Loop
+The GNN trains itself using **Self-Supervised Link Prediction**. We hide a fraction of the edges and force the network to guess if a connection exists:
+
+1. **Structural Message Passing**: The network propagates context using dense documentation edges (`EXPLAINS`, `REFERENCES`).
+2. **Strict Supervision Routing**: The network explicitly evaluates Cross-Entropy Loss **only** on Semantic Edges (`IMPLEMENTS`, `CONTAINS`, `HAS_PARAM`, `CALLS`, `RELATED_TO`, `REPLACES`). This prevents generic documentation ties from destroying the semantic accuracy of the embeddings.
+3. **True-Positive Filtered Hard Negatives**: To prevent graph memorization, the network calculates degree-distribution probabilities to hunt for "hard negative" connections. We apply strict True-Positive filtering to ensure valid edges are never accidentally penalized.
+4. **Split Weight Decay Regularization**: The Low-Rank Bilinear Decoder matrices (`U` and `V`) are pushed through a 10x multiplier on their Adam weight decay compared to the encoder parameters. This mathematically stabilizes the gradients on exceedingly rare, specialized relations.
+5. **Residual Fallbacks**: The 3-layer depth tensor network automatically falls back to its previous hidden state if a node becomes dynamically isolated during batched training, keeping backwards gradients universally alive.
+
+By passing messages through this mathematically hardened network for 40 epochs, the output `[24485, 256]` tensor coordinate map allows us to bypass legacy keyword searches and retrieve PyTorch APIs by pure, absolute structural meaning.
 
 ---
 
@@ -37,7 +43,6 @@ This allows us to search by **meaning**, not just keywords.
 1. **Seed Selection** — find the 4 best starting nodes using GNN cosine similarity
 2. **Graph Expansion** — follow 1-hop edges to gather related neighbours
 3. **Hybrid Re-Ranking** — combine GNN score + keyword hits + graph degree to produce final top-K list
-
 
 ---
 ### 💡 Architectural Note: Decoupled GNN & Pipeline

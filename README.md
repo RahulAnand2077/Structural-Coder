@@ -144,35 +144,34 @@ Any changes, experiments, or updates made to the GNN Coder (such as changing emb
 
 ---
 
-# 🛠️ GNN Encoder Details (Technical)
+# 🛠️ GNN Architecture Details (Pro-Level Technical Deep Dive)
 
-This system uses a heterogeneous GNN to learn graph-aware embeddings.
+The retrieval engine is powered by an advanced **Heterogeneous Graph Transformer (HGTConv)**. It learns dense vector embeddings for every API concept by analyzing the intricate physical and semantic relationships in the PyTorch source code graph.
 
-### What The Engine Covers
- 
-The GNN part covers:
-1. pulls the knowledge graph and node embeddings from Neo4j
-2. converts the graph into `torch_geometric.data.HeteroData`
-3. trains a heterogeneous GNN with self-supervised link prediction
-4. evaluates the trained model
-5. exports graph-aware node embeddings
+### 🔌 1. Local-First CSV Engine (Zero-Setup)
+In the past, the GNN was hardcoded to query a live **Neo4j Graph Database**, fetching pre-computed Language Model (LLM) embeddings. 
+**Our upgraded pipeline is 100% locally-native**. It instantly loads `nodes.csv` and `edges.csv` straight into RAM as a `PyTorch Geometric HeteroData` tensor structure. Features are hashed dynamically without requiring any background Java servers or pre-computed embeddings!
 
-### Core Architecture
+### 🧬 2. Heterogeneous Link Prediction
+Unlike traditional Homogeneous networks (GraphSAGE) which treat every connection identically, our **HGTConv** model respects the *schema* of the graph. It uses different network weights depending on whether a node is an `API_Class`, `API_Function`, or `CodeSnippet`. 
 
-The original MiniLM embeddings are the input node features. The GNN learns a new embedding on top of them:
-
-```text
-x = original text embedding
-z = GNN(x, graph)
+The network dynamically passes structural messages between 9 distinct node types over 6 specific semantic edges:
+```python
+DEFAULT_SUPERVISION_RELATIONS = {
+    "IMPLEMENTS", "CONTAINS", "HAS_PARAM", "CALLS", "RELATED_TO", "REPLACES",
+}
 ```
 
-Best practice:
-- keep the original Neo4j property as `embedding`
-- store the trained graph-aware vectors as `gnn_embedding`
+### 🧠 3. Advanced Mathematical Optimizations
+We implemented 4 mathematical upgrades directly into the training loop to guarantee maximum accuracy and prevent graph memorization:
 
-### Output Files
+1. **Structural Edge Isolation**: The network uses Cross-Entropy Loss on the 6 semantic edges (`IMPLEMENTS`, `CALLS`, etc.), but leaves the massive `EXPLAINS` and `REFERENCES` edges untouched. This allows the model to utilize documentation density for *message-passing* without letting it bleed into the supervision targets.
+2. **True-Positive Filtered Negative Sampling**: We abandoned random `torch.randint` sampling. We explicitly map the graph's degree-distribution and calculate weighted probabilities to pull hard negatives, ensuring we never accidentally inject true-positive edges into the negative pool.
+3. **Split Weight Decay**: We decouple the `Adam` weight-decay regularization arrays. The LowRankBilinearDecoder matrices receive a 10x stronger penalty (`weight_decay * 10`) than the encoder params, preventing the U/V factors from growing unboundedly on rare relations (like `REPLACES`).
+4. **Isolated Layer Norm & Residuals**: We utilize a `num_layers=3` depth tensor network where isolated nodes automatically fall back to their previous-layer hidden state, keeping backpropagation gradients perfectly alive on deeply disconnected sub-graphs.
 
-- `outputs/hetero_graph.pt`
-- `outputs/best_model.pt`
-- `outputs/gnn_embeddings.jsonl`
-- `outputs/gnn_embeddings.pt`
+### 📈 Output Artifacts
+After 40 epochs of self-supervised Link Prediction, the model exports normalized, fully grounded 256-dimensional coordinates for all 24,000 nodes natively into:
+- `artifacts/research_gnn_embeddings.json`
+
+This file is then structurally fed directly into the Prompt Scaffolder.
