@@ -7,7 +7,7 @@ Main file:
 - `gnn_encoder.ipynb`
 
 ## What The Notebook Covers
-
+ 
 The notebook does the full GNN part end to end:
 
 1. pulls the knowledge graph and node embeddings from Neo4j
