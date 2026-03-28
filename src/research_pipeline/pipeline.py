@@ -72,6 +72,19 @@ class CsvFirstResearchPipeline:
         out_dim: int = 96,
         epochs: int = 20,
     ) -> StepReport:
+        if self._gnn_retriever is not None:
+            return StepReport(name="GNN Training", details={"status": "already_loaded"})
+
+        if self.embedding_cache.exists():
+            from src.graph_rag.gnn_encoder import load_embeddings
+            self._gnn_node_ids, self._gnn_embeddings = load_embeddings(self.embedding_cache)
+            self._gnn_retriever = GraphRAGRetriever(
+                graph=self.graph,
+                node_ids=self._gnn_node_ids,
+                embeddings=self._gnn_embeddings,
+            )
+            return StepReport(name="GNN Training", details={"status": "loaded_from_cache", "cache_path": str(self.embedding_cache)})
+
         tensor_data = build_graph_tensor_data(
             self.nodes_csv,
             self.edges_csv,
@@ -100,6 +113,7 @@ class CsvFirstResearchPipeline:
             "embedding_dim": int(embeddings.size(1)),
             "epochs": epochs,
             "cache_path": str(self.embedding_cache),
+            "status": "newly_trained",
         }
         return StepReport(name="GNN Training", details=details)
 
