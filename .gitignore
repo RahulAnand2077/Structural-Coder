@@ -6,13 +6,15 @@ env/
 
 # Python bytecode
 __pycache__/
-*.py[codz]
+*.pyc
 *.pyo
+*.py[codz]
 
 # Runtime artifacts (regenerable)
 outputs/
 artifacts/
 datasets/
+!outputs/.gitkeep
 
 # Pytest cache
 .pytest_cache/

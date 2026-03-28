@@ -141,3 +141,38 @@ See `benchmark/outputs/comparison_report.md` for full per-query details.
 ### 💡 Architectural Note: Decoupled GNN & Pipeline
 Please note that the **GNN Coder (Retriever)** and the **Integration Pipeline** are strictly decoupled. 
 Any changes, experiments, or updates made to the GNN Coder (such as changing embedding dimensions, training algorithms, or node attributes) will **not** break the core pipeline. The pipeline simply consumes the resulting `research_gnn_embeddings.json` artifact, guaranteeing the system remains perfectly intact and modular.
+
+---
+
+# 🛠️ GNN Encoder Details (Technical)
+
+This system uses a heterogeneous GNN to learn graph-aware embeddings.
+
+### What The Engine Covers
+ 
+The GNN part covers:
+1. pulls the knowledge graph and node embeddings from Neo4j
+2. converts the graph into `torch_geometric.data.HeteroData`
+3. trains a heterogeneous GNN with self-supervised link prediction
+4. evaluates the trained model
+5. exports graph-aware node embeddings
+
+### Core Architecture
+
+The original MiniLM embeddings are the input node features. The GNN learns a new embedding on top of them:
+
+```text
+x = original text embedding
+z = GNN(x, graph)
+```
+
+Best practice:
+- keep the original Neo4j property as `embedding`
+- store the trained graph-aware vectors as `gnn_embedding`
+
+### Output Files
+
+- `outputs/hetero_graph.pt`
+- `outputs/best_model.pt`
+- `outputs/gnn_embeddings.jsonl`
+- `outputs/gnn_embeddings.pt`

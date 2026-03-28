@@ -2,7 +2,7 @@
 torch>=2.0
 torch-geometric>=2.4
 
-# Graph database (optional — only needed for Neo4j integration)
+# Graph database
 neo4j>=5.0
 
 # Utilities
