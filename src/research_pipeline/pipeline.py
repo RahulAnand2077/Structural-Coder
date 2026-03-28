@@ -68,9 +68,9 @@ class CsvFirstResearchPipeline:
 
     def step3_gnn_training(
         self,
-        hidden_dim: int = 256,
-        out_dim: int = 256,
-        epochs: int = 40,
+        hidden_dim: int = 128,
+        out_dim: int = 96,
+        epochs: int = 20,
     ) -> StepReport:
         if self._gnn_retriever is not None:
             return StepReport(name="GNN Training", details={"status": "already_loaded"})
