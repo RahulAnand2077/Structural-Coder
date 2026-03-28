@@ -361,7 +361,7 @@ class CsvFirstResearchPipeline:
         for node in nodes:
             text = f"{node.label} {node.name} {node.url}".lower()
             score += sum(1.0 for token in tokens if token in text)
-        return score / max(1, len(nodes))
+        return min(1.0, score / max(1, len(nodes)))
 
     def _generate_answer_for_context(
         self,
@@ -410,8 +410,14 @@ class CsvFirstResearchPipeline:
         probe = unique_symbols[: min(12, len(unique_symbols))]
         if not probe:
             return 0.0
-        hits = sum(1 for s in probe if s in answer_l)
-        return hits / len(probe)
+        
+        hits = 0
+        for s in probe:
+            base_name = s.split('.')[-1]
+            if s in answer_l or base_name in answer_l:
+                hits += 1
+                
+        return min(1.0, hits / len(probe))
 
     def _code_validity_score(self, answer: str, target_hardware: str) -> float:
         code = self._extract_code_candidate(answer)
