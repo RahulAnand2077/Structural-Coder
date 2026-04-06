@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 
 import torch
@@ -17,7 +18,16 @@ class RetrievedContext:
 
 
 class GraphRAGRetriever:
-    """Hybrid retriever: GNN embedding similarity + graph expansion + lexical rerank."""
+    """Hybrid retriever: GNN embedding similarity + global lexical search + graph expansion."""
+
+    # Words too generic to discriminate between 24K nodes
+    STOPWORDS = {
+        "torch", "pytorch", "python", "write", "create", "implement", "using",
+        "with", "from", "script", "code", "how", "the", "for", "that", "this",
+        "show", "use", "model", "module", "function", "class", "method",
+        "import", "setup", "define", "build", "make", "get", "set", "run",
+        "example", "simple", "basic", "custom", "specific", "apply", "add",
+    }
 
     def __init__(
         self,
@@ -30,30 +40,37 @@ class GraphRAGRetriever:
         self.embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         self.id_to_index = {nid: i for i, nid in enumerate(node_ids)}
 
-    # Words too common to be useful for lexical filtering
-    STOPWORDS = {
-        "torch", "pytorch", "python", "write", "create", "implement", "using",
-        "with", "from", "script", "code", "how", "the", "for", "that", "this",
-        "show", "use", "model", "module", "function", "class", "method",
-        "import", "setup", "define", "build", "make", "get", "set", "run",
-    }
+    # ------------------------------------------------------------------ #
+    #  PUBLIC API                                                         #
+    # ------------------------------------------------------------------ #
 
     def retrieve(self, query: str, top_k: int = 20, seed_k: int = 4, expansion_hops: int = 1) -> RetrievedContext:
-        query_tokens = {
-            t.lower() for t in query.replace('.', ' ').replace('_', ' ').split()
-            if len(t.strip()) > 2 and t.lower() not in self.STOPWORDS
-        }
-        q = self._query_embedding(query, self.embeddings.size(1))
-        scores = torch.mv(self.embeddings, q)
-        top_seed_idx = torch.topk(scores, k=min(max(40, seed_k * 10), scores.numel())).indices.tolist()
-        seed_ids = self._select_seed_ids(top_seed_idx, seed_k, query_tokens)
-        # If GNN pool had no lexical matches, search ALL nodes globally
-        if not seed_ids or (query_tokens and not self._seeds_have_lexical_match(seed_ids, query_tokens)):
-            global_ids = self._global_lexical_fallback_ids(query_tokens, seed_k)
-            if global_ids:
-                seed_ids = global_ids
+        query_tokens = self._clean_tokens(query)
 
-        collected_node_ids: set[int] = set(seed_ids)
+        # --- Phase 1: Dual-source seed selection ---
+        # Source A: GNN cosine pool (may be noisy due to MD5 hashing)
+        q_vec = self._query_embedding(query, self.embeddings.size(1))
+        gnn_scores = torch.mv(self.embeddings, q_vec)
+        gnn_top_idx = torch.topk(gnn_scores, k=min(max(40, seed_k * 10), gnn_scores.numel())).indices.tolist()
+        gnn_seeds = self._pick_lexical_seeds(gnn_top_idx, seed_k, query_tokens)
+
+        # Source B: Global lexical scan (brute-force but precise)
+        global_seeds = self._global_lexical_search(query_tokens, seed_k)
+
+        # Merge: prefer global lexical (precise) over GNN (noisy)
+        seen: set[int] = set()
+        seed_ids: list[int] = []
+        for nid in global_seeds + gnn_seeds:
+            if nid not in seen:
+                seen.add(nid)
+                seed_ids.append(nid)
+        seed_ids = seed_ids[:seed_k]
+
+        if not seed_ids:
+            seed_ids = [self.node_ids[0]] if self.node_ids else []
+
+        # --- Phase 2: 1-hop graph expansion ---
+        collected_nids: set[int] = set(seed_ids)
         collected_edges: dict[tuple[int, int, str], Edge] = {}
 
         frontier = set(seed_ids)
@@ -62,31 +79,38 @@ class GraphRAGRetriever:
             for nid in list(frontier):
                 for edge in self.graph.adj.get(nid, []):
                     collected_edges[(edge.source, edge.target, edge.relation)] = edge
-                    collected_node_ids.add(edge.target)
+                    collected_nids.add(edge.target)
                     next_frontier.add(edge.target)
                 for edge in self.graph.rev_adj.get(nid, []):
                     collected_edges[(edge.source, edge.target, edge.relation)] = edge
-                    collected_node_ids.add(edge.source)
+                    collected_nids.add(edge.source)
                     next_frontier.add(edge.source)
             frontier = next_frontier
 
-        ranked = self._hybrid_rank(query, collected_node_ids, scores)
-        selected_ids = [nid for nid, _ in ranked[: max(1, top_k)]]
+        # --- Phase 3: Also inject top-K from global lexical scan ---
+        # This guarantees relevant nodes appear even if graph expansion
+        # went through dead-end URL-only nodes with zero edges.
+        global_top = self._global_lexical_search(query_tokens, top_k)
+        for nid in global_top:
+            collected_nids.add(nid)
+
+        # --- Phase 4: Hybrid rank + select ---
+        ranked = self._hybrid_rank(query_tokens, collected_nids, gnn_scores)
+        selected_ids = [nid for nid, _ in ranked[:max(1, top_k)]]
         selected_nodes = [self.graph.nodes[nid] for nid in selected_ids if nid in self.graph.nodes]
-        seed_names = [self.graph.nodes[nid].name for nid in seed_ids if nid in self.graph.nodes and self.graph.nodes[nid].name.strip()]
 
-        # Ensure context contains meaningful symbols; fallback to top ranked named nodes.
-        if not any(n.name.strip() for n in selected_nodes):
-            ranked_named = [nid for nid, _ in ranked if nid in self.graph.nodes and self.graph.nodes[nid].name.strip()]
-            selected_ids = ranked_named[: max(1, top_k)]
-            selected_nodes = [self.graph.nodes[nid] for nid in selected_ids]
-
-        if not selected_nodes:
-            fallback_ids = self._global_named_fallback_ids(query, max(1, top_k))
-            selected_nodes = [self.graph.nodes[nid] for nid in fallback_ids if nid in self.graph.nodes]
+        # Build seed display names (extract from URL if name is empty)
+        seed_names = []
+        for nid in seed_ids:
+            node = self.graph.nodes.get(nid)
+            if node is None:
+                continue
+            display = node.name.strip() or self._name_from_url(node.url)
+            if display:
+                seed_names.append(display)
 
         if not seed_names:
-            seed_names = [n.name for n in selected_nodes if n.name.strip()][:seed_k]
+            seed_names = [self._node_display_name(n) for n in selected_nodes if self._node_display_name(n)][:seed_k]
 
         return RetrievedContext(
             query=query,
@@ -95,40 +119,44 @@ class GraphRAGRetriever:
             edges=list(collected_edges.values()),
         )
 
-    def _hybrid_rank(self, query: str, node_ids: set[int], gnn_scores: torch.Tensor) -> list[tuple[int, float]]:
-        query_tokens = {
-            t.lower() for t in query.replace('.', ' ').replace('_', ' ').split()
-            if len(t.strip()) > 2 and t.lower() not in self.STOPWORDS
-        }
+    # ------------------------------------------------------------------ #
+    #  HYBRID RANKING                                                     #
+    # ------------------------------------------------------------------ #
+
+    def _hybrid_rank(self, query_tokens: set[str], node_ids: set[int], gnn_scores: torch.Tensor) -> list[tuple[int, float]]:
         ranked: list[tuple[int, float]] = []
         for nid in node_ids:
-            if nid not in self.id_to_index or nid not in self.graph.nodes:
+            if nid not in self.graph.nodes:
                 continue
-            idx = self.id_to_index[nid]
             node = self.graph.nodes[nid]
-            text = f"{node.label} {node.name} {node.url}".lower()
-            lexical = sum(1.0 for t in query_tokens if t in text)
+            searchable = self._searchable_text(node)
+            lexical = sum(1.0 for t in query_tokens if t in searchable) if query_tokens else 0.0
             degree = float(len(self.graph.adj.get(nid, [])) + len(self.graph.rev_adj.get(nid, [])))
-            # Lexical-dominant ranking: relevance > GNN noise
-            score = 1.0 * float(gnn_scores[idx]) + 1.5 * lexical + 0.05 * min(20.0, degree)
+
+            # GNN score (may be 0 for nodes not in the embedding index)
+            gnn_val = 0.0
+            if nid in self.id_to_index:
+                gnn_val = float(gnn_scores[self.id_to_index[nid]])
+
+            # Lexical-dominant: 1.5x lexical, 0.8x GNN, plus bonuses
+            score = 0.8 * gnn_val + 1.5 * lexical + 0.05 * min(20.0, degree)
             if node.name.strip():
                 score += 0.5
             if self._is_api_like(node.label):
                 score += 0.4
             ranked.append((nid, score))
+
         ranked.sort(key=lambda x: x[1], reverse=True)
         return ranked
 
-    def _select_seed_ids(self, candidate_indices: list[int], seed_k: int, query_tokens: set[str] | None = None) -> list[int]:
-        """Select seeds with mandatory lexical pre-filter.
-        
-        Nodes that have at least 1 query-token overlap with their name are
-        strongly preferred.  Pure GNN-only seeds (no lexical match) are a
-        last-resort fallback to prevent context poisoning.
-        """
-        lexical_match: list[int] = []   # best: name matches query tokens
-        api_only: list[int] = []        # okay: API-like but no lexical match
-        fallback: list[int] = []        # worst: no name or not API
+    # ------------------------------------------------------------------ #
+    #  SEED SELECTION                                                     #
+    # ------------------------------------------------------------------ #
+
+    def _pick_lexical_seeds(self, candidate_indices: list[int], seed_k: int, query_tokens: set[str]) -> list[int]:
+        """Pick seeds from the GNN candidate pool that have lexical overlap."""
+        hits: list[int] = []
+        others: list[int] = []
 
         for idx in candidate_indices:
             if idx < 0 or idx >= len(self.node_ids):
@@ -137,83 +165,85 @@ class GraphRAGRetriever:
             node = self.graph.nodes.get(nid)
             if node is None:
                 continue
-            name = node.name.strip()
-            
-            # Build full searchable text from all node fields
-            full_text = f"{node.label} {name} {node.url}".lower().replace('.', ' ').replace('_', ' ').replace('/', ' ')
 
-            # Lexical pre-filter: does any field contain a query token?
-            has_lexical_hit = False
-            if query_tokens:
-                has_lexical_hit = any(tok in full_text for tok in query_tokens)
+            searchable = self._searchable_text(node)
+            has_match = any(tok in searchable for tok in query_tokens) if query_tokens else False
 
-            if has_lexical_hit and name:
-                lexical_match.append(nid)
-            elif has_lexical_hit:
-                # URL-only match (node has no name but URL is relevant)
-                api_only.append(nid)
-            elif name and self._is_api_like(node.label):
-                api_only.append(nid)
-            else:
-                fallback.append(nid)
+            if has_match:
+                hits.append(nid)
+            elif node.name.strip() and self._is_api_like(node.label):
+                others.append(nid)
 
-            if len(lexical_match) >= seed_k * 2:
+            if len(hits) >= seed_k:
                 break
 
-        # Priority: lexical matches > API-only > fallback
-        out = lexical_match[:seed_k]
-        for pool in (api_only, fallback):
-            for nid in pool:
-                if len(out) >= seed_k:
-                    break
-                if nid not in out:
-                    out.append(nid)
-
-        if not out and self.node_ids:
-            out = [self.node_ids[0]]
+        out = hits[:seed_k]
+        for nid in others:
+            if len(out) >= seed_k:
+                break
+            if nid not in out:
+                out.append(nid)
         return out
 
-    def _seeds_have_lexical_match(self, seed_ids: list[int], query_tokens: set[str]) -> bool:
-        """Check if any seed has meaningful lexical overlap with query."""
-        for nid in seed_ids:
-            node = self.graph.nodes.get(nid)
-            if node is None:
-                continue
-            full_text = f"{node.label} {node.name} {node.url}".lower().replace('.', ' ').replace('_', ' ').replace('/', ' ')
-            if any(tok in full_text for tok in query_tokens):
-                return True
-        return False
-
-    def _global_lexical_fallback_ids(self, query_tokens: set[str], k: int) -> list[int]:
-        """Search ALL 24K nodes for the best lexical matches.
-        
-        This is triggered when the GNN cosine pool has no lexical overlap
-        with the query — meaning the MD5 hash embeddings failed completely.
-        Unlike _global_named_fallback_ids, this searches URLs too.
-        """
+    def _global_lexical_search(self, query_tokens: set[str], k: int) -> list[int]:
+        """Brute-force search ALL 24K nodes by token overlap. Fast (~20ms)."""
         if not query_tokens:
             return []
         scored: list[tuple[float, int]] = []
         for nid, node in self.graph.nodes.items():
-            full_text = f"{node.label} {node.name} {node.url}".lower().replace('.', ' ').replace('_', ' ').replace('/', ' ')
-            lexical = sum(1.0 for t in query_tokens if t in full_text)
-            if lexical == 0:
+            searchable = self._searchable_text(node)
+            hits = sum(1.0 for t in query_tokens if t in searchable)
+            if hits == 0:
                 continue
             degree = float(len(self.graph.adj.get(nid, [])) + len(self.graph.rev_adj.get(nid, [])))
             name_bonus = 0.5 if node.name.strip() else 0.0
             api_bonus = 0.5 if self._is_api_like(node.label) else 0.0
-            score = 2.0 * lexical + 0.04 * min(25.0, degree) + name_bonus + api_bonus
+            score = 2.0 * hits + 0.04 * min(25.0, degree) + name_bonus + api_bonus
             scored.append((score, nid))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [nid for _, nid in scored[:max(1, k)]]
 
-    def _global_named_fallback_ids(self, query: str, k: int) -> list[int]:
-        query_tokens = {
-            t.lower() for t in query.replace('.', ' ').replace('_', ' ').split()
+    # ------------------------------------------------------------------ #
+    #  UTILITIES                                                          #
+    # ------------------------------------------------------------------ #
+
+    def _clean_tokens(self, text: str) -> set[str]:
+        return {
+            t.lower() for t in text.replace('.', ' ').replace('_', ' ').split()
             if len(t.strip()) > 2 and t.lower() not in self.STOPWORDS
         }
-        return self._global_lexical_fallback_ids(query_tokens, k) if query_tokens else []
+
+    @staticmethod
+    def _searchable_text(node: Node) -> str:
+        """Combine all node fields into a lowercase, normalized search string."""
+        return f"{node.label} {node.name} {node.url}".lower().replace('.', ' ').replace('_', ' ').replace('/', ' ')
+
+    @staticmethod
+    def _name_from_url(url: str) -> str:
+        """Extract a human-readable name from a PyTorch docs URL."""
+        if not url:
+            return ""
+        # e.g. ".../torch.compiler_dynamic_shapes.html" -> "torch.compiler_dynamic_shapes"
+        match = re.search(r'/([^/]+?)\.html$', url)
+        if match:
+            raw = match.group(1)
+            # Clean up: "torch.nn.MultiheadAttention" or "torch.compiler_dynamic_shapes"
+            if raw.startswith("torch"):
+                return raw.replace('_', '.')
+            return raw
+        return ""
+
+    @staticmethod
+    def _node_display_name(node: Node) -> str:
+        name = node.name.strip()
+        if name:
+            return name
+        if node.url:
+            match = re.search(r'/([^/]+?)\.html$', node.url)
+            if match:
+                return match.group(1)
+        return ""
 
     @staticmethod
     def _is_api_like(label: str) -> bool:
