@@ -348,20 +348,36 @@ class CsvFirstResearchPipeline:
         if self._gnn_retriever is None:
             self.step3_gnn_training()
 
-    @staticmethod
-    def _query_tokens(query: str) -> set[str]:
-        return {tok.lower() for tok in query.replace(".", " ").replace("_", " ").split() if tok.strip()}
+    # Evaluator stopwords — same list as retriever to keep scoring consistent
+    _EVAL_STOPWORDS = {
+        "torch", "pytorch", "python", "write", "create", "implement", "using",
+        "with", "from", "script", "code", "how", "the", "for", "that", "this",
+        "show", "use", "model", "module", "function", "class", "method",
+        "import", "setup", "define", "build", "make", "get", "set", "run",
+        "example", "simple", "basic", "custom", "specific", "apply", "add",
+    }
+
+    @classmethod
+    def _query_tokens(cls, query: str) -> set[str]:
+        return {
+            tok.lower() for tok in query.replace(".", " ").replace("_", " ").split()
+            if len(tok.strip()) > 2 and tok.lower() not in cls._EVAL_STOPWORDS
+        }
 
     def _token_hit_score(self, query: str, nodes: list[Node]) -> float:
+        """Retrieval score: what fraction of query keywords appear in retrieved nodes."""
         tokens = self._query_tokens(query)
         if not tokens or not nodes:
             return 0.0
 
-        score = 0.0
+        matched_tokens: set[str] = set()
         for node in nodes:
             text = f"{node.label} {node.name} {node.url}".lower()
-            score += sum(1.0 for token in tokens if token in text)
-        return min(1.0, score / max(1, len(nodes)))
+            for token in tokens:
+                if token in text:
+                    matched_tokens.add(token)
+        # Fraction of query-specific keywords covered by at least one node
+        return min(1.0, len(matched_tokens) / len(tokens))
 
     def _generate_answer_for_context(
         self,
@@ -435,18 +451,24 @@ class CsvFirstResearchPipeline:
         return min(1.0, hits / len(probe))
 
     def _code_validity_score(self, answer: str, target_hardware: str) -> float:
+        """Validity: fraction of C0-C5 checks that passed.
+        
+        Skipped checks (e.g., C5 on macOS) count as 0.5 instead of 1.0
+        to avoid inflating scores for untested compile behaviour.
+        """
         code = self._extract_code_candidate(answer)
         if not code.strip():
             return 0.0
         report = self.validator.validate(code, target_hardware=target_hardware)
         total = max(1, len(report.checks))
-        passed = sum(1 for c in report.checks if c.passed)
-        ratio = passed / total
-        if report.passed_strict:
-            return 1.0
-        if report.passed_with_skips:
-            return max(0.85, ratio)
-        return ratio
+        score = 0.0
+        for c in report.checks:
+            if c.status == "pass":
+                score += 1.0
+            elif c.status == "skipped":
+                score += 0.5  # partial credit — not fully verified
+            # "fail" contributes 0.0
+        return min(1.0, score / total)
 
     @staticmethod
     def _extract_code_candidate(answer: str) -> str:
@@ -477,6 +499,7 @@ class CsvFirstResearchPipeline:
 
     @staticmethod
     def _build_ollama_prompt(query: str, nodes: list[Node]) -> str:
+        import re as _re
         lines = [
             "You are a PyTorch 2.x coding assistant.",
             "The following PyTorch APIs may be relevant to the query.",
@@ -487,10 +510,17 @@ class CsvFirstResearchPipeline:
             "",
             "Potentially relevant PyTorch APIs:",
         ]
-        for idx, node in enumerate(nodes[:20], start=1):
+        idx = 0
+        for node in nodes[:20]:
             name = node.name.strip()
+            if not name and node.url:
+                # Extract readable name from URL for documentation nodes
+                match = _re.search(r'/([^/]+?)\.html$', node.url)
+                if match:
+                    name = match.group(1)
             if not name:
                 continue
+            idx += 1
             lines.append(f"  {idx}. {name}")
         lines.append("")
         lines.append("Provide a concise answer with working Python code.")

@@ -62,7 +62,7 @@ def main():
             print("\n🔍 [1/2] structural-coder is searching the knowledge graph...")
             gnn_ctx = pipeline._gnn_retriever.retrieve(query=query, top_k=20, seed_k=4, expansion_hops=1)
             
-            print(f"🧠 Found relevant APIs: {', '.join([n.name for n in gnn_ctx.nodes[:5] if n.name])}")
+            print(f"🧠 Found relevant APIs: {', '.join(gnn_ctx.seed_nodes[:5])}")
             print(f"🤖 Generating code using llama3.2 (3B parameters) WITH context...")
             
             our_result = pipeline._generate_answer_for_context(
