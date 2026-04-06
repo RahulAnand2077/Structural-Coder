@@ -1,3 +1,1 @@
-from .pipeline import StructuralCoderGraphRAG
-
-__all__ = ["StructuralCoderGraphRAG"]
+# Initialization module for graph_rag
