@@ -30,8 +30,19 @@ class GraphRAGRetriever:
         self.embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         self.id_to_index = {nid: i for i, nid in enumerate(node_ids)}
 
+    # Words too common to be useful for lexical filtering
+    STOPWORDS = {
+        "torch", "pytorch", "python", "write", "create", "implement", "using",
+        "with", "from", "script", "code", "how", "the", "for", "that", "this",
+        "show", "use", "model", "module", "function", "class", "method",
+        "import", "setup", "define", "build", "make", "get", "set", "run",
+    }
+
     def retrieve(self, query: str, top_k: int = 20, seed_k: int = 4, expansion_hops: int = 1) -> RetrievedContext:
-        query_tokens = {t.lower() for t in query.replace('.', ' ').replace('_', ' ').split() if len(t.strip()) > 2}
+        query_tokens = {
+            t.lower() for t in query.replace('.', ' ').replace('_', ' ').split()
+            if len(t.strip()) > 2 and t.lower() not in self.STOPWORDS
+        }
         q = self._query_embedding(query, self.embeddings.size(1))
         scores = torch.mv(self.embeddings, q)
         top_seed_idx = torch.topk(scores, k=min(max(40, seed_k * 10), scores.numel())).indices.tolist()
@@ -82,7 +93,10 @@ class GraphRAGRetriever:
         )
 
     def _hybrid_rank(self, query: str, node_ids: set[int], gnn_scores: torch.Tensor) -> list[tuple[int, float]]:
-        query_tokens = {t.lower() for t in query.replace('.', ' ').replace('_', ' ').split() if len(t.strip()) > 2}
+        query_tokens = {
+            t.lower() for t in query.replace('.', ' ').replace('_', ' ').split()
+            if len(t.strip()) > 2 and t.lower() not in self.STOPWORDS
+        }
         ranked: list[tuple[int, float]] = []
         for nid in node_ids:
             if nid not in self.id_to_index or nid not in self.graph.nodes:
