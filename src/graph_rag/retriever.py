@@ -47,8 +47,11 @@ class GraphRAGRetriever:
         scores = torch.mv(self.embeddings, q)
         top_seed_idx = torch.topk(scores, k=min(max(40, seed_k * 10), scores.numel())).indices.tolist()
         seed_ids = self._select_seed_ids(top_seed_idx, seed_k, query_tokens)
-        if not seed_ids:
-            seed_ids = self._global_named_fallback_ids(query, seed_k)
+        # If GNN pool had no lexical matches, search ALL nodes globally
+        if not seed_ids or (query_tokens and not self._seeds_have_lexical_match(seed_ids, query_tokens)):
+            global_ids = self._global_lexical_fallback_ids(query_tokens, seed_k)
+            if global_ids:
+                seed_ids = global_ids
 
         collected_node_ids: set[int] = set(seed_ids)
         collected_edges: dict[tuple[int, int, str], Edge] = {}
@@ -170,22 +173,47 @@ class GraphRAGRetriever:
             out = [self.node_ids[0]]
         return out
 
-    def _global_named_fallback_ids(self, query: str, k: int) -> list[int]:
-        query_tokens = {t.lower() for t in query.split() if t.strip()}
+    def _seeds_have_lexical_match(self, seed_ids: list[int], query_tokens: set[str]) -> bool:
+        """Check if any seed has meaningful lexical overlap with query."""
+        for nid in seed_ids:
+            node = self.graph.nodes.get(nid)
+            if node is None:
+                continue
+            full_text = f"{node.label} {node.name} {node.url}".lower().replace('.', ' ').replace('_', ' ').replace('/', ' ')
+            if any(tok in full_text for tok in query_tokens):
+                return True
+        return False
+
+    def _global_lexical_fallback_ids(self, query_tokens: set[str], k: int) -> list[int]:
+        """Search ALL 24K nodes for the best lexical matches.
+        
+        This is triggered when the GNN cosine pool has no lexical overlap
+        with the query — meaning the MD5 hash embeddings failed completely.
+        Unlike _global_named_fallback_ids, this searches URLs too.
+        """
+        if not query_tokens:
+            return []
         scored: list[tuple[float, int]] = []
         for nid, node in self.graph.nodes.items():
-            name = node.name.strip()
-            if not name:
+            full_text = f"{node.label} {node.name} {node.url}".lower().replace('.', ' ').replace('_', ' ').replace('/', ' ')
+            lexical = sum(1.0 for t in query_tokens if t in full_text)
+            if lexical == 0:
                 continue
-            text = f"{node.label} {node.name} {node.url}".lower()
-            lexical = sum(1.0 for t in query_tokens if t in text)
             degree = float(len(self.graph.adj.get(nid, [])) + len(self.graph.rev_adj.get(nid, [])))
-            api_bonus = 1.0 if self._is_api_like(node.label) else 0.0
-            score = 1.6 * lexical + 0.04 * min(25.0, degree) + api_bonus
+            name_bonus = 0.5 if node.name.strip() else 0.0
+            api_bonus = 0.5 if self._is_api_like(node.label) else 0.0
+            score = 2.0 * lexical + 0.04 * min(25.0, degree) + name_bonus + api_bonus
             scored.append((score, nid))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [nid for _, nid in scored[: max(1, k)]]
+        return [nid for _, nid in scored[:max(1, k)]]
+
+    def _global_named_fallback_ids(self, query: str, k: int) -> list[int]:
+        query_tokens = {
+            t.lower() for t in query.replace('.', ' ').replace('_', ' ').split()
+            if len(t.strip()) > 2 and t.lower() not in self.STOPWORDS
+        }
+        return self._global_lexical_fallback_ids(query_tokens, k) if query_tokens else []
 
     @staticmethod
     def _is_api_like(label: str) -> bool:
