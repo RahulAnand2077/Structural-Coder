@@ -1,1 +1,1 @@
-# Initialization module for graph_rag
+# empty init

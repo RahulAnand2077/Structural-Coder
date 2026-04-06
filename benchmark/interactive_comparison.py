@@ -85,13 +85,13 @@ def main():
             
             # Compute Scores (Our System)
             our_retrieval = pipeline._token_hit_score(query, gnn_ctx.nodes)
-            our_grounding = pipeline._grounding_score(our_answer, gnn_ctx.nodes)
+            our_grounding = pipeline._grounding_score(our_answer, gnn_ctx.nodes, query=query)
             our_validity = pipeline._code_validity_score(our_answer, target_hardware="H100")
             our_final = 0.4 * our_retrieval + 0.6 * (0.5 * our_grounding + 0.5 * our_validity)
             
             # Compute Scores (Standalone LLM)
             their_retrieval = 0.0  # Standalone LLM has no retrieval
-            their_grounding = pipeline._grounding_score(their_answer, gnn_ctx.nodes)
+            their_grounding = pipeline._grounding_score(their_answer, gnn_ctx.nodes, query=query)
             their_validity = pipeline._code_validity_score(their_answer, target_hardware="H100")
             their_final = 0.4 * their_retrieval + 0.6 * (0.5 * their_grounding + 0.5 * their_validity)
             

@@ -198,8 +198,8 @@ class CsvFirstResearchPipeline:
                 use_ollama=use_ollama,
             )
 
-            gnn_grounding = self._grounding_score(gnn_answer["answer"], gnn_ctx.nodes)
-            lexical_grounding = self._grounding_score(lexical_answer["answer"], lex_ctx.nodes)
+            gnn_grounding = self._grounding_score(gnn_answer["answer"], gnn_ctx.nodes, query=q)
+            lexical_grounding = self._grounding_score(lexical_answer["answer"], lex_ctx.nodes, query=q)
 
             gnn_validity = self._code_validity_score(gnn_answer["answer"], target_hardware=target_hardware)
             lexical_validity = self._code_validity_score(lexical_answer["answer"], target_hardware=target_hardware)
@@ -361,7 +361,7 @@ class CsvFirstResearchPipeline:
         for node in nodes:
             text = f"{node.label} {node.name} {node.url}".lower()
             score += sum(1.0 for token in tokens if token in text)
-        return score / max(1, len(nodes))
+        return min(1.0, score / max(1, len(nodes)))
 
     def _generate_answer_for_context(
         self,
@@ -395,8 +395,25 @@ class CsvFirstResearchPipeline:
             "```"
         )
 
-    def _grounding_score(self, answer: str, nodes: list[Node]) -> float:
-        symbols = [n.name.strip().lower() for n in nodes if n.name.strip()]
+    def _grounding_score(self, answer: str, nodes: list[Node], query: str = "") -> float:
+        """Score grounding with query-relevance filtering.
+        
+        Only nodes whose names have lexical overlap with the query count
+        toward grounding. This prevents inflated scores when the retriever
+        fetches irrelevant APIs that the LLM blindly uses.
+        """
+        query_tokens = self._query_tokens(query) if query else set()
+        symbols = []
+        for n in nodes:
+            name = n.name.strip().lower()
+            if not name:
+                continue
+            # If we have query tokens, only count query-relevant nodes
+            if query_tokens:
+                name_tokens = set(name.replace('.', ' ').replace('_', ' ').split())
+                if not query_tokens & name_tokens:
+                    continue
+            symbols.append(name)
         if not symbols:
             return 0.0
         answer_l = answer.lower()
@@ -410,8 +427,12 @@ class CsvFirstResearchPipeline:
         probe = unique_symbols[: min(12, len(unique_symbols))]
         if not probe:
             return 0.0
-        hits = sum(1 for s in probe if s in answer_l)
-        return hits / len(probe)
+        hits = 0
+        for s in probe:
+            base_name = s.split('.')[-1]
+            if s in answer_l or base_name in answer_l:
+                hits += 1
+        return min(1.0, hits / len(probe))
 
     def _code_validity_score(self, answer: str, target_hardware: str) -> float:
         code = self._extract_code_candidate(answer)
@@ -458,13 +479,21 @@ class CsvFirstResearchPipeline:
     def _build_ollama_prompt(query: str, nodes: list[Node]) -> str:
         lines = [
             "You are a PyTorch 2.x coding assistant.",
-            "Use only the retrieved context symbols while answering.",
+            "The following PyTorch APIs may be relevant to the query.",
+            "Use them as references where appropriate, but prioritize writing correct, runnable code.",
+            "Do NOT use an API unless you are confident it exists in PyTorch.",
+            "",
             f"User query: {query}",
-            "Retrieved context:",
+            "",
+            "Potentially relevant PyTorch APIs:",
         ]
-        for idx, node in enumerate(nodes[:30], start=1):
-            lines.append(f"{idx}. label={node.label}; name={node.name}; url={node.url}")
-        lines.append("Provide a concise, compile-aware answer.")
+        for idx, node in enumerate(nodes[:20], start=1):
+            name = node.name.strip()
+            if not name:
+                continue
+            lines.append(f"  {idx}. {name}")
+        lines.append("")
+        lines.append("Provide a concise answer with working Python code.")
         return "\n".join(lines)
 
     @staticmethod

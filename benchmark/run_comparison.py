@@ -133,7 +133,7 @@ def main() -> None:
         )
         # Generate using the baseline template (pure retrieval, no LLM)
         our_answer = pipeline._baseline_answer_from_context(query, gnn_ctx.nodes)
-        our_grounding  = pipeline._grounding_score(our_answer, gnn_ctx.nodes)
+        our_grounding  = pipeline._grounding_score(our_answer, gnn_ctx.nodes, query=query)
         our_validity   = pipeline._code_validity_score(our_answer, target_hardware=args.target_hardware)
         retrieval_score = pipeline._token_hit_score(query, gnn_ctx.nodes)
         our_generation  = 0.5 * our_grounding + 0.5 * our_validity
@@ -167,7 +167,7 @@ def main() -> None:
 
             t2  = time.time()
             std_answer   = call_ollama(raw_prompt, model)
-            std_grounding = pipeline._grounding_score(std_answer, gnn_ctx.nodes)  # compare to same truth nodes
+            std_grounding = pipeline._grounding_score(std_answer, gnn_ctx.nodes, query=query)
             std_validity  = pipeline._code_validity_score(std_answer, target_hardware=args.target_hardware)
             std_final     = 0.0 * 0.4 + 0.6 * (0.5 * std_grounding + 0.5 * std_validity)  # retrieval = 0
             t3  = time.time()
