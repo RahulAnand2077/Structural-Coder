@@ -135,19 +135,21 @@ class GraphRAGRetriever:
             if node is None:
                 continue
             name = node.name.strip()
-            if not name:
-                fallback.append(nid)
-                continue
+            
+            # Build full searchable text from all node fields
+            full_text = f"{node.label} {name} {node.url}".lower().replace('.', ' ').replace('_', ' ').replace('/', ' ')
 
-            # Lexical pre-filter: does the node name contain any query token?
-            name_lower = name.lower().replace('.', ' ').replace('_', ' ')
+            # Lexical pre-filter: does any field contain a query token?
             has_lexical_hit = False
             if query_tokens:
-                has_lexical_hit = any(tok in name_lower for tok in query_tokens)
+                has_lexical_hit = any(tok in full_text for tok in query_tokens)
 
-            if has_lexical_hit:
+            if has_lexical_hit and name:
                 lexical_match.append(nid)
-            elif self._is_api_like(node.label):
+            elif has_lexical_hit:
+                # URL-only match (node has no name but URL is relevant)
+                api_only.append(nid)
+            elif name and self._is_api_like(node.label):
                 api_only.append(nid)
             else:
                 fallback.append(nid)
