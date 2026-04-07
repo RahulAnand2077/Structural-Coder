@@ -15,6 +15,9 @@ outputs/
 artifacts/
 datasets/
 !outputs/.gitkeep
+!outputs/*.pt
+!outputs/*.jsonl
+!outputs/*.json
 
 # Pytest cache
 .pytest_cache/
