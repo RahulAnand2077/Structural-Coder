@@ -526,10 +526,10 @@ class CsvFirstResearchPipeline:
         lines = [
             "You are a PyTorch 2.x coding assistant.",
             "Below is a list of PyTorch resources retrieved from official documentation.",
-            "Use the APIs in your code where applicable, and use the Conceptual Documentation",
-            "to understand design patterns.",
-            "WARNING: Items marked as concepts/tutorials are NOT callable modules. DO NOT attempt to import them.",
-            "Always write complete, runnable Python code with proper imports.",
+            "ADVISORY RULE: ONLY use the provided APIs if they fit naturally. A simple, clean, runnable solution is better than forcing obscure APIs! If the tools seem irrelevant, IGNORE THEM completely and rely on your own baseline knowledge.",
+            "Keep your codebase as direct and simple as possible. Do not overcomplicate.",
+            "WARNING: Items marked as concepts/tutorials are NOT callable modules. DO NOT attempt to blindly import `import <name>` unless you are certain it is a standard PyTorch module.",
+            "Always write complete, runnable Python code with proper standard imports.",
             "",
             f"User query: {query}",
             ""
@@ -539,7 +539,8 @@ class CsvFirstResearchPipeline:
         concept_lines = []
         
         idx = 0
-        for node in nodes[:20]:
+        # TRUNCATE: Only provide top 5 high-precision nodes to avoid noise overwhelming small LLMs
+        for node in nodes[:5]:
             name = node.name.strip()
             url_hint = ""
             if not name and node.url:
@@ -561,12 +562,12 @@ class CsvFirstResearchPipeline:
                 concept_lines.append(entry)
                 
         if api_lines:
-            lines.append("💻 Valid PyTorch APIs (Use these in your code):")
+            lines.append("💻 Valid PyTorch APIs (Advisory - ONLY use if relevant):")
             lines.extend(api_lines)
             lines.append("")
             
         if concept_lines:
-            lines.append("📚 Conceptual Context (READ-ONLY context. DO NOT import as code!):")
+            lines.append("📚 Conceptual Context (READ-ONLY Context. Do not import as code!):")
             lines.extend(concept_lines)
             lines.append("")
             
