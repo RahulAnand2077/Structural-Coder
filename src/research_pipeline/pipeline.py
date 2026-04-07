@@ -417,11 +417,18 @@ class CsvFirstResearchPipeline:
         Only nodes whose names have lexical overlap with the query count
         toward grounding. This prevents inflated scores when the retriever
         fetches irrelevant APIs that the LLM blindly uses.
+        Also checks URL-derived names for documentation nodes.
         """
+        import re as _re
         query_tokens = self._query_tokens(query) if query else set()
         symbols = []
         for n in nodes:
             name = n.name.strip().lower()
+            # Also try URL-derived name for documentation nodes
+            if not name and n.url:
+                match = _re.search(r'/([^/]+?)\.html$', n.url)
+                if match:
+                    name = match.group(1).lower()
             if not name:
                 continue
             # If we have query tokens, only count query-relevant nodes
@@ -440,7 +447,7 @@ class CsvFirstResearchPipeline:
                 continue
             seen.add(s)
             unique_symbols.append(s)
-        probe = unique_symbols[: min(12, len(unique_symbols))]
+        probe = unique_symbols[:min(12, len(unique_symbols))]
         if not probe:
             return 0.0
         hits = 0
@@ -501,29 +508,35 @@ class CsvFirstResearchPipeline:
     def _build_ollama_prompt(query: str, nodes: list[Node]) -> str:
         import re as _re
         lines = [
-            "You are a PyTorch 2.x coding assistant.",
-            "The following PyTorch APIs may be relevant to the query.",
-            "Use them as references where appropriate, but prioritize writing correct, runnable code.",
-            "Do NOT use an API unless you are confident it exists in PyTorch.",
+            "You are a PyTorch 2.x coding expert.",
+            "Below is a list of real PyTorch APIs retrieved from official documentation.",
+            "Use these APIs correctly in your code where applicable.",
+            "If an API doesn't fit the query, ignore it and use your own knowledge.",
+            "Always write complete, runnable Python code with proper imports.",
             "",
             f"User query: {query}",
             "",
-            "Potentially relevant PyTorch APIs:",
+            "Retrieved PyTorch APIs (from official docs):",
         ]
         idx = 0
-        for node in nodes[:20]:
+        for node in nodes[:15]:
             name = node.name.strip()
+            url_hint = ""
             if not name and node.url:
-                # Extract readable name from URL for documentation nodes
                 match = _re.search(r'/([^/]+?)\.html$', node.url)
                 if match:
                     name = match.group(1)
             if not name:
                 continue
+            # Add doc URL as hint for the LLM to understand context
+            if node.url:
+                url_hint = f"  (docs: {node.url})"
+            label = node.label.replace('API_', '').replace('_', ' ').title() if node.label else ''
             idx += 1
-            lines.append(f"  {idx}. {name}")
+            lines.append(f"  {idx}. {name} [{label}]{url_hint}")
         lines.append("")
-        lines.append("Provide a concise answer with working Python code.")
+        lines.append("Write complete working Python code. Include all necessary imports.")
+        lines.append("Use ```python code blocks for your code.")
         return "\n".join(lines)
 
     @staticmethod

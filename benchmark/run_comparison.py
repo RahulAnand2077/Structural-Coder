@@ -126,13 +126,18 @@ def main() -> None:
         print(SEPARATOR)
         print_header()
 
-        # ── 2a. OUR MODEL: Graph-RAG retrieval + validation (NO Ollama) ───
+        # ── 2a. OUR MODEL: Graph-RAG retrieval + LLM generation ────────────
         t0  = time.time()
         gnn_ctx = pipeline._gnn_retriever.retrieve(
             query=query, top_k=args.top_k, seed_k=4, expansion_hops=1
         )
-        # Generate using the baseline template (pure retrieval, no LLM)
-        our_answer = pipeline._baseline_answer_from_context(query, gnn_ctx.nodes)
+        # Generate using LLM with retrieved context
+        our_result = pipeline._generate_answer_for_context(
+            query=query, nodes=gnn_ctx.nodes,
+            model=opponents[0] if opponents else "llama3.2",
+            use_ollama=True,
+        )
+        our_answer = our_result["answer"]
         our_grounding  = pipeline._grounding_score(our_answer, gnn_ctx.nodes, query=query)
         our_validity   = pipeline._code_validity_score(our_answer, target_hardware=args.target_hardware)
         retrieval_score = pipeline._token_hit_score(query, gnn_ctx.nodes)

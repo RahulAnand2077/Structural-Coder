@@ -20,12 +20,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.research_pipeline.pipeline import CsvFirstResearchPipeline
-from benchmark.run_comparison import call_ollama  # Reusing the raw Ollama caller we wrote earlier
+from benchmark.run_comparison import call_ollama  # Reusing the raw Ollama caller
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive Head-to-Head Comparison")
     parser.add_argument("--model", default="llama3.2", help="Which Ollama model to use for generation")
     args = parser.parse_args()
+    model = args.model
 
     print("\n" + "="*80)
     print(" 🚀 INITIALIZING STRUCTURAL-CODER GRAPH-RAG ENGINE")
@@ -63,12 +64,12 @@ def main():
             gnn_ctx = pipeline._gnn_retriever.retrieve(query=query, top_k=20, seed_k=4, expansion_hops=1)
             
             print(f"🧠 Found relevant APIs: {', '.join(gnn_ctx.seed_nodes[:5])}")
-            print(f"🤖 Generating code using llama3.2 (3B parameters) WITH context...")
+            print(f"🤖 Generating code using {model} WITH Graph-RAG context...")
             
             our_result = pipeline._generate_answer_for_context(
                 query=query, 
                 nodes=gnn_ctx.nodes, 
-                model="llama3.2", 
+                model=model, 
                 use_ollama=True
             )
             our_answer = our_result["answer"]
@@ -76,12 +77,13 @@ def main():
             # -----------------------------------------------------------------
             # 2. STANDALONE LLM (No Context)
             # -----------------------------------------------------------------
-            print(f"\n🤖 [2/2] Standalone: Generating code using llama3.2 (3B parameters) only (NO context)...")
+            print(f"\n🤖 [2/2] Standalone: Generating code using {model} only (NO context)...")
             raw_prompt = (
-                f"You are a PyTorch 2.x expert. Answer the following coding question "
-                f"with working code only:\n\n{query}"
+                f"You are a PyTorch 2.x coding expert. "
+                f"Write complete, runnable Python code with proper imports for the following:\n\n{query}\n\n"
+                f"Use ```python code blocks."
             )
-            their_answer = call_ollama(raw_prompt, "llama3.2")
+            their_answer = call_ollama(raw_prompt, model)
             
             # Compute Scores (Our System)
             our_retrieval = pipeline._token_hit_score(query, gnn_ctx.nodes)
@@ -90,10 +92,12 @@ def main():
             our_final = 0.4 * our_retrieval + 0.6 * (0.5 * our_grounding + 0.5 * our_validity)
             
             # Compute Scores (Standalone LLM)
-            their_retrieval = 0.0  # Standalone LLM has no retrieval
-            their_grounding = pipeline._grounding_score(their_answer, gnn_ctx.nodes, query=query)
+            # Standalone has no retrieval (0.0), and we don't grade its grounding
+            # against our retrieved nodes since it never saw them — that would be unfair.
+            their_retrieval = 0.0
+            their_grounding = 0.0  # N/A — standalone never saw retrieved context
             their_validity = pipeline._code_validity_score(their_answer, target_hardware="H100")
-            their_final = 0.4 * their_retrieval + 0.6 * (0.5 * their_grounding + 0.5 * their_validity)
+            their_final = 0.6 * (0.5 * their_grounding + 0.5 * their_validity)
             
             # -----------------------------------------------------------------
             # PRINT RESULTS
