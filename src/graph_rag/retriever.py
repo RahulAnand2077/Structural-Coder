@@ -34,11 +34,13 @@ class GraphRAGRetriever:
         graph: CsvGraph,
         node_ids: list[int],
         embeddings: torch.Tensor,
+        query_encoder: torch.nn.Module | None = None,
     ) -> None:
         self.graph = graph
         self.node_ids = node_ids
         self.embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         self.id_to_index = {nid: i for i, nid in enumerate(node_ids)}
+        self.query_encoder = query_encoder
 
     # ------------------------------------------------------------------ #
     #  PUBLIC API                                                         #
@@ -250,13 +252,54 @@ class GraphRAGRetriever:
         label_l = (label or "").lower()
         return label_l.startswith("api_") or "pytorchconcept" in label_l
 
-    @staticmethod
-    def _query_embedding(query: str, dim: int) -> torch.Tensor:
+    def _query_embedding(self, query: str, dim: int) -> torch.Tensor:
+        # Base MD5 hashing features
         vec = torch.zeros(dim, dtype=torch.float32)
+        # Using 128 as the base dim if passing to encoder, otherwise use param dim
+        base_dim = 128 if self.query_encoder is not None else dim
+        base_vec = torch.zeros(base_dim, dtype=torch.float32)
+        
         for tok in query.lower().split():
             h = int(hashlib.md5(tok.encode("utf-8")).hexdigest(), 16)
-            vec[h % dim] += 1.0
-        norm = torch.norm(vec)
-        if norm > 0:
-            vec = vec / norm
+            if self.query_encoder is not None:
+                base_vec[h % base_dim] += 1.0
+            else:
+                vec[h % dim] += 1.0
+                
+        if self.query_encoder is not None:
+            norm = torch.norm(base_vec)
+            if norm > 0:
+                base_vec = base_vec / norm
+                
+            # Architect query to fit HeteroGraphEncoder single-node projection
+            # Use PyTorchConcept as the default query text landing layer
+            query_x = base_vec.unsqueeze(0)
+            x_dict = {nt: torch.zeros((0, base_dim), dtype=torch.float32) 
+                      for nt in self.query_encoder.node_types}
+            if "PyTorchConcept" in x_dict:
+                x_dict["PyTorchConcept"] = query_x
+            elif x_dict:  # Fallback to the first node type
+                x_dict[list(x_dict.keys())[0]] = query_x
+                
+            edge_index_dict = {
+                tuple(et): torch.empty((2, 0), dtype=torch.long)
+                for et in self.query_encoder.edge_types
+            }
+            
+            with torch.no_grad():
+                out = self.query_encoder(x_dict, edge_index_dict)
+                # Recover encoded 256-D query vector
+                for v in out.values():
+                    if v.size(0) > 0:
+                        vec = v[0]
+                        break
+        else:
+            norm = torch.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+                
+        # Normalize the final vector (either GNN projection or base hash)
+        final_norm = torch.norm(vec)
+        if final_norm > 0:
+            vec = vec / final_norm
         return vec

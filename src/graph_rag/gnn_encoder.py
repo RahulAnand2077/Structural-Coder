@@ -365,3 +365,42 @@ def load_embeddings_from_jsonl(path: str | Path) -> tuple[list[int], torch.Tenso
             embeddings.append(emb)
     
     return node_ids, torch.tensor(embeddings, dtype=torch.float32)
+
+def load_query_encoder(
+    metadata_path: str | Path,
+    weights_path: str | Path,
+    in_channels: int = 128,
+    hidden_channels: int = 256,
+    out_channels: int = 256
+) -> HeteroGraphEncoder | None:
+    """Load the HeteroGraphEncoder for query embedding alignment."""
+    try:
+        mp = Path(metadata_path)
+        wp = Path(weights_path)
+        if not mp.exists() or not wp.exists():
+            return None
+
+        # metadata is expected to have 'node_types' and 'edge_types'
+        meta_dict = json.loads(mp.read_text(encoding="utf-8"))
+        node_types = meta_dict.get("node_types", ["PyTorchConcept"])
+        # edge_types from json comes as lists of 3 strings; convert to tuple
+        edge_types = [tuple(e) for e in meta_dict.get("edge_types", [])]
+        
+        model = HeteroGraphEncoder(
+            metadata=(node_types, edge_types),
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            out_channels=out_channels,
+        )
+        
+        state = torch.load(str(wp), map_location="cpu", weights_only=False)
+        # Handle dict from saving logic "model_state"
+        if isinstance(state, dict) and "model_state" in state:
+            state = state["model_state"]
+            
+        model.load_state_dict(state, strict=False)
+        model.eval()
+        return model
+    except Exception as e:
+        print(f"Warning: Failed to load query encoder: {e}")
+        return None

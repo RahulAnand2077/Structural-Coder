@@ -76,9 +76,15 @@ class CsvFirstResearchPipeline:
             return StepReport(name="GNN Training", details={"status": "already_loaded"})
 
         if self.embedding_cache.exists():
+            query_encoder = None
             if self.embedding_cache.suffix == ".jsonl":
-                from src.graph_rag.gnn_encoder import load_embeddings_from_jsonl
+                from src.graph_rag.gnn_encoder import load_embeddings_from_jsonl, load_query_encoder
                 self._gnn_node_ids, self._gnn_embeddings = load_embeddings_from_jsonl(self.embedding_cache)
+                # Auto-load the corresponding best_model.pt to properly embed query texts if available
+                query_encoder = load_query_encoder(
+                    metadata_path=self.embedding_cache.parent / "hetero_metadata.json",
+                    weights_path=self.embedding_cache.parent / "best_model.pt",
+                )
             else:
                 from src.graph_rag.gnn_encoder import load_embeddings
                 self._gnn_node_ids, self._gnn_embeddings = load_embeddings(self.embedding_cache)
@@ -87,8 +93,9 @@ class CsvFirstResearchPipeline:
                 graph=self.graph,
                 node_ids=self._gnn_node_ids,
                 embeddings=self._gnn_embeddings,
+                query_encoder=query_encoder,
             )
-            return StepReport(name="GNN Training", details={"status": "loaded_from_cache", "cache_path": str(self.embedding_cache)})
+            return StepReport(name="GNN Training", details={"status": "loaded_from_cache", "cache_path": str(self.embedding_cache), "query_encoder_loaded": query_encoder is not None})
 
         tensor_data = build_graph_tensor_data(
             self.nodes_csv,
