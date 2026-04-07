@@ -1,4 +1,4 @@
-﻿outputs/*
-!outputs/.gitkeep
+﻿!outputs/.gitkeep
 __pycache__/
 *.pyc
+.venv
