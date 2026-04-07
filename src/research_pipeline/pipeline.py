@@ -443,6 +443,10 @@ class CsvFirstResearchPipeline:
                     name = match.group(1).lower()
             if not name:
                 continue
+            # Grounding is only expected for executable API nodes
+            lbl = n.label or ""
+            if not lbl.startswith("API_"):
+                continue
             # If we have query tokens, only count query-relevant nodes
             if query_tokens:
                 name_tokens = set(name.replace('.', ' ').replace('_', ' ').split())
@@ -520,18 +524,22 @@ class CsvFirstResearchPipeline:
     def _build_ollama_prompt(query: str, nodes: list[Node]) -> str:
         import re as _re
         lines = [
-            "You are a PyTorch 2.x coding expert.",
-            "Below is a list of real PyTorch APIs retrieved from official documentation.",
-            "Use these APIs correctly in your code where applicable.",
-            "If an API doesn't fit the query, ignore it and use your own knowledge.",
+            "You are a PyTorch 2.x coding assistant.",
+            "Below is a list of PyTorch resources retrieved from official documentation.",
+            "Use the APIs in your code where applicable, and use the Conceptual Documentation",
+            "to understand design patterns.",
+            "WARNING: Items marked as concepts/tutorials are NOT callable modules. DO NOT attempt to import them.",
             "Always write complete, runnable Python code with proper imports.",
             "",
             f"User query: {query}",
-            "",
-            "Retrieved PyTorch APIs (from official docs):",
+            ""
         ]
+        
+        api_lines = []
+        concept_lines = []
+        
         idx = 0
-        for node in nodes[:15]:
+        for node in nodes[:20]:
             name = node.name.strip()
             url_hint = ""
             if not name and node.url:
@@ -540,13 +548,28 @@ class CsvFirstResearchPipeline:
                     name = match.group(1)
             if not name:
                 continue
-            # Add doc URL as hint for the LLM to understand context
+            
             if node.url:
                 url_hint = f"  (docs: {node.url})"
             label = node.label.replace('API_', '').replace('_', ' ').title() if node.label else ''
             idx += 1
-            lines.append(f"  {idx}. {name} [{label}]{url_hint}")
-        lines.append("")
+            entry = f"  {idx}. {name} [{label}]{url_hint}"
+            
+            if node.label and node.label.startswith("API_"):
+                api_lines.append(entry)
+            else:
+                concept_lines.append(entry)
+                
+        if api_lines:
+            lines.append("💻 Valid PyTorch APIs (Use these in your code):")
+            lines.extend(api_lines)
+            lines.append("")
+            
+        if concept_lines:
+            lines.append("📚 Conceptual Context (READ-ONLY context. DO NOT import as code!):")
+            lines.extend(concept_lines)
+            lines.append("")
+            
         lines.append("Write complete working Python code. Include all necessary imports.")
         lines.append("Use ```python code blocks for your code.")
         return "\n".join(lines)
