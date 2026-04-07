@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Structural-Coder vs Standalone Ollama Benchmark")
     p.add_argument("--nodes",           default="data/nodes.csv")
     p.add_argument("--edges",           default="data/edges.csv")
-    p.add_argument("--embedding-cache", default="artifacts/research_gnn_embeddings.json")
+    p.add_argument("--embedding-cache", default="outputs/gnn_embeddings.jsonl")
     p.add_argument("--queries-file",    default="benchmark/queries/queries.json")
     p.add_argument("--models",          default="llama3.2",
                    help="Comma-separated list of Ollama models to test as opponents")

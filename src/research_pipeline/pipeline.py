@@ -76,8 +76,13 @@ class CsvFirstResearchPipeline:
             return StepReport(name="GNN Training", details={"status": "already_loaded"})
 
         if self.embedding_cache.exists():
-            from src.graph_rag.gnn_encoder import load_embeddings
-            self._gnn_node_ids, self._gnn_embeddings = load_embeddings(self.embedding_cache)
+            if self.embedding_cache.suffix == ".jsonl":
+                from src.graph_rag.gnn_encoder import load_embeddings_from_jsonl
+                self._gnn_node_ids, self._gnn_embeddings = load_embeddings_from_jsonl(self.embedding_cache)
+            else:
+                from src.graph_rag.gnn_encoder import load_embeddings
+                self._gnn_node_ids, self._gnn_embeddings = load_embeddings(self.embedding_cache)
+
             self._gnn_retriever = GraphRAGRetriever(
                 graph=self.graph,
                 node_ids=self._gnn_node_ids,

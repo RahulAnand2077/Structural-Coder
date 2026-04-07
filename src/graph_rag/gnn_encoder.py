@@ -347,3 +347,21 @@ def load_embeddings(path: str | Path) -> tuple[list[int], torch.Tensor]:
     node_ids = [int(n) for n in payload["node_ids"]]
     embeddings = torch.tensor(payload["embeddings"], dtype=torch.float32)
     return node_ids, embeddings
+
+def load_embeddings_from_jsonl(path: str | Path) -> tuple[list[int], torch.Tensor]:
+    """Load embeddings from neo4j-style jsonl export."""
+    node_ids = []
+    embeddings = []
+    with Path(path).open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            data = json.loads(line)
+            # element_id is like "4:170763f8-8d9f-40c2-b8d0-f5cb2fbaa0a1:22717"
+            raw_id = data["element_id"]
+            nid = int(raw_id.rsplit(":", 1)[-1])
+            emb = data["embedding"]
+            node_ids.append(nid)
+            embeddings.append(emb)
+    
+    return node_ids, torch.tensor(embeddings, dtype=torch.float32)

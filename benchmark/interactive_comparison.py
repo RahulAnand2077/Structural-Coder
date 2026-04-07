@@ -37,7 +37,7 @@ def main():
     pipeline = CsvFirstResearchPipeline(
         nodes_csv=str(ROOT / "data/nodes.csv"),
         edges_csv=str(ROOT / "data/edges.csv"),
-        embedding_cache=str(ROOT / "artifacts/research_gnn_embeddings.json"),
+        embedding_cache=str(ROOT / "outputs/gnn_embeddings.jsonl"),
     )
     pipeline.step3_gnn_training()
     
