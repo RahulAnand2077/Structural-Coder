@@ -34,13 +34,12 @@ class GraphRAGRetriever:
         graph: CsvGraph,
         node_ids: list[int],
         embeddings: torch.Tensor,
-        query_encoder: torch.nn.Module | None = None,
     ) -> None:
         self.graph = graph
         self.node_ids = node_ids
+        # L2-normalize vectors for dot-product = cosine similarity
         self.embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         self.id_to_index = {nid: i for i, nid in enumerate(node_ids)}
-        self.query_encoder = query_encoder
 
     # ------------------------------------------------------------------ #
     #  PUBLIC API                                                         #
@@ -49,30 +48,38 @@ class GraphRAGRetriever:
     def retrieve(self, query: str, top_k: int = 20, seed_k: int = 4, expansion_hops: int = 1) -> RetrievedContext:
         query_tokens = self._clean_tokens(query)
 
-        # --- Phase 1: Dual-source seed selection ---
-        # Source A: GNN cosine pool (may be noisy due to MD5 hashing)
-        q_vec = self._query_embedding(query, self.embeddings.size(1))
-        gnn_scores = torch.mv(self.embeddings, q_vec)
-        gnn_top_idx = torch.topk(gnn_scores, k=min(max(40, seed_k * 10), gnn_scores.numel())).indices.tolist()
-        gnn_seeds = self._pick_lexical_seeds(gnn_top_idx, seed_k, query_tokens)
-
-        # Source B: Global lexical scan (brute-force but precise)
+        # --- Phase 1: Text-Based Anchor Discovery ---
+        # Topological embeddings do NOT contain English, they map Graph coordinates! 
+        # We must use strict Lexical matching to find the initial entry points into the graph space.
         global_seeds = self._global_lexical_search(query_tokens, seed_k)
+        
+        # Determine aggregate Topological Neighborhood Score
+        # Average the vectors of the Anchor nodes to pull the structural center of the query
+        gnn_scores = torch.zeros(self.embeddings.size(0), dtype=torch.float32)
+        valid_anchors = 0
+        for nid in global_seeds:
+            if nid in self.id_to_index:
+                anchor_idx = self.id_to_index[nid]
+                anchor_vec = self.embeddings[anchor_idx]
+                gnn_scores += torch.mv(self.embeddings, anchor_vec)
+                valid_anchors += 1
+                
+        if valid_anchors > 0:
+            gnn_scores = gnn_scores / valid_anchors
+            
+        # Optional: Grab Top-K structurally closest nodes to our Anchors
+        # This allows Graph-RAG to find nodes that share NO text tokens with the query but share many edges!
+        topological_nids = []
+        if valid_anchors > 0:
+            gnn_top_idx = torch.topk(gnn_scores, k=min(20, gnn_scores.numel())).indices.tolist()
+            topological_nids = [self.node_ids[idx] for idx in gnn_top_idx]
 
-        # Merge: prefer global lexical (precise) over GNN (noisy)
-        seen: set[int] = set()
-        seed_ids: list[int] = []
-        for nid in global_seeds + gnn_seeds:
-            if nid not in seen:
-                seen.add(nid)
-                seed_ids.append(nid)
-        seed_ids = seed_ids[:seed_k]
-
+        seed_ids = global_seeds[:seed_k]
         if not seed_ids:
             seed_ids = [self.node_ids[0]] if self.node_ids else []
 
         # --- Phase 2: 1-hop graph expansion ---
-        collected_nids: set[int] = set(seed_ids)
+        collected_nids: set[int] = set(seed_ids + topological_nids)
         collected_edges: dict[tuple[int, int, str], Edge] = {}
 
         frontier = set(seed_ids)
@@ -89,14 +96,12 @@ class GraphRAGRetriever:
                     next_frontier.add(edge.source)
             frontier = next_frontier
 
-        # --- Phase 3: Also inject top-K from global lexical scan ---
-        # This guarantees relevant nodes appear even if graph expansion
-        # went through dead-end URL-only nodes with zero edges.
-        global_top = self._global_lexical_search(query_tokens, top_k)
-        for nid in global_top:
+        # Ensure global anchors are strictly preserved at the top of context availability
+        for nid in global_seeds:
             collected_nids.add(nid)
 
-        # --- Phase 4: Hybrid rank + select ---
+        # --- Phase 3: Hybrid rank + select ---
+        # Ranks all context combining Text Matches + Structural Proximity
         ranked = self._hybrid_rank(query_tokens, collected_nids, gnn_scores)
         selected_ids = [nid for nid, _ in ranked[:max(1, top_k)]]
         selected_nodes = [self.graph.nodes[nid] for nid in selected_ids if nid in self.graph.nodes]
@@ -140,10 +145,8 @@ class GraphRAGRetriever:
             if nid in self.id_to_index:
                 gnn_val = float(gnn_scores[self.id_to_index[nid]])
 
-            # Lexical-dominant: 1.5x lexical, 0.8x GNN, plus bonuses
-            score = 0.8 * gnn_val + 1.5 * lexical + 0.05 * min(20.0, degree)
-            if node.name.strip():
-                score += 0.5
+            # Topological Score bounds topological neighborhood clusters efficiently
+            score = 1.0 * gnn_val + 2.0 * lexical + 0.05 * min(20.0, degree)
             if self._is_api_like(node.label):
                 score += 0.4
             ranked.append((nid, score))
@@ -151,41 +154,7 @@ class GraphRAGRetriever:
         ranked.sort(key=lambda x: x[1], reverse=True)
         return ranked
 
-    # ------------------------------------------------------------------ #
-    #  SEED SELECTION                                                     #
-    # ------------------------------------------------------------------ #
 
-    def _pick_lexical_seeds(self, candidate_indices: list[int], seed_k: int, query_tokens: set[str]) -> list[int]:
-        """Pick seeds from the GNN candidate pool that have lexical overlap."""
-        hits: list[int] = []
-        others: list[int] = []
-
-        for idx in candidate_indices:
-            if idx < 0 or idx >= len(self.node_ids):
-                continue
-            nid = self.node_ids[idx]
-            node = self.graph.nodes.get(nid)
-            if node is None:
-                continue
-
-            searchable = self._searchable_text(node)
-            has_match = any(tok in searchable for tok in query_tokens) if query_tokens else False
-
-            if has_match:
-                hits.append(nid)
-            elif node.name.strip() and self._is_api_like(node.label):
-                others.append(nid)
-
-            if len(hits) >= seed_k:
-                break
-
-        out = hits[:seed_k]
-        for nid in others:
-            if len(out) >= seed_k:
-                break
-            if nid not in out:
-                out.append(nid)
-        return out
 
     def _global_lexical_search(self, query_tokens: set[str], k: int) -> list[int]:
         """Brute-force search ALL 24K nodes by token overlap. Fast (~20ms)."""
@@ -236,6 +205,7 @@ class GraphRAGRetriever:
             return raw
         return ""
 
+
     @staticmethod
     def _node_display_name(node: Node) -> str:
         name = node.name.strip()
@@ -251,55 +221,3 @@ class GraphRAGRetriever:
     def _is_api_like(label: str) -> bool:
         label_l = (label or "").lower()
         return label_l.startswith("api_") or "pytorchconcept" in label_l
-
-    def _query_embedding(self, query: str, dim: int) -> torch.Tensor:
-        # Base MD5 hashing features
-        vec = torch.zeros(dim, dtype=torch.float32)
-        # Using 128 as the base dim if passing to encoder, otherwise use param dim
-        base_dim = 128 if self.query_encoder is not None else dim
-        base_vec = torch.zeros(base_dim, dtype=torch.float32)
-        
-        for tok in query.lower().split():
-            h = int(hashlib.md5(tok.encode("utf-8")).hexdigest(), 16)
-            if self.query_encoder is not None:
-                base_vec[h % base_dim] += 1.0
-            else:
-                vec[h % dim] += 1.0
-                
-        if self.query_encoder is not None:
-            norm = torch.norm(base_vec)
-            if norm > 0:
-                base_vec = base_vec / norm
-                
-            # Architect query to fit HeteroGraphEncoder single-node projection
-            # Use PyTorchConcept as the default query text landing layer
-            query_x = base_vec.unsqueeze(0)
-            x_dict = {nt: torch.zeros((0, base_dim), dtype=torch.float32) 
-                      for nt in self.query_encoder.node_types}
-            if "PyTorchConcept" in x_dict:
-                x_dict["PyTorchConcept"] = query_x
-            elif x_dict:  # Fallback to the first node type
-                x_dict[list(x_dict.keys())[0]] = query_x
-                
-            edge_index_dict = {
-                tuple(et): torch.empty((2, 0), dtype=torch.long)
-                for et in self.query_encoder.edge_types
-            }
-            
-            with torch.no_grad():
-                out = self.query_encoder(x_dict, edge_index_dict)
-                # Recover encoded 256-D query vector
-                for v in out.values():
-                    if v.size(0) > 0:
-                        vec = v[0]
-                        break
-        else:
-            norm = torch.norm(vec)
-            if norm > 0:
-                vec = vec / norm
-                
-        # Normalize the final vector (either GNN projection or base hash)
-        final_norm = torch.norm(vec)
-        if final_norm > 0:
-            vec = vec / final_norm
-        return vec
