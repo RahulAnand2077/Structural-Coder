@@ -151,7 +151,7 @@ class CsvFirstResearchPipeline:
     def step4_ollama_integration(
         self,
         query: str,
-        model: str = "llama3.2",
+        model: str = "llama3.1:8b",
         top_k: int = 20,
         seed_k: int = 4,
         expansion_hops: int = 1,
@@ -183,7 +183,7 @@ class CsvFirstResearchPipeline:
         self,
         queries: Iterable[str],
         top_k: int = 20,
-        model: str = "llama3.2",
+        model: str = "llama3.1:8b",
         target_hardware: str = "H100",
         use_ollama: bool = True,
         retrieval_weight: float = 0.4,
@@ -310,7 +310,7 @@ class CsvFirstResearchPipeline:
         self,
         queries: Iterable[str],
         top_k: int = 20,
-        model: str = "llama3.2",
+        model: str = "llama3.1:8b",
         target_hardware: str = "H100",
     ) -> dict:
         baseline = self.step5_ablation_study(
@@ -352,7 +352,7 @@ class CsvFirstResearchPipeline:
         self,
         query: str,
         queries_for_ablation: Iterable[str],
-        model: str = "llama3.2",
+        model: str = "llama3.1:8b",
         hidden_dim: int = 128,
         out_dim: int = 96,
         epochs: int = 20,

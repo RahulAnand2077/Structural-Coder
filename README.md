@@ -13,7 +13,7 @@ It uses a massive **knowledge graph** (24,485 PyTorch API concepts, 47,958 conne
 
 ## 🆚 How Are We Better Than a Regular AI Chatbot?
 
-| Feature | Structural-Coder (Ours) | Standalone AI (e.g. llama3.2) |
+| Feature | Structural-Coder (Ours) | Standalone AI (e.g. llama3.1:8b) |
 |---------|------------------------|-------------------------------|
 | PyTorch knowledge graph (24K nodes, 47K edges) | ✅ | ❌ |
 | Heterogeneous GNN (9 distinct node types) | ✅ HGTConv | ❌ |
@@ -22,7 +22,7 @@ It uses a massive **knowledge graph** (24,485 PyTorch API concepts, 47,958 conne
 | Code validation (C0–C5 checks) | ✅ Automatic | ❌ Never |
 | **Avg Final Score (benchmark)** | **🏆 0.65+** | **0.28** |
 
-We won **all 10 out of 10** benchmark queries against llama3.2.
+We won **all 10 out of 10** benchmark queries against llama3.1:8b.
 
 ---
 
@@ -108,7 +108,7 @@ outputs/gnn_embeddings.jsonl ──→ load_embeddings_from_jsonl()
                     _build_ollama_prompt() ── Splits APIs vs Concepts
                               │
                               ▼
-                    Ollama LLM (llama3.2) ── Advisory prompt
+                    Ollama LLM (llama3.1:8b) ── Advisory prompt
                               │
                               ▼
                     Active Validator (C0–C5)
@@ -142,18 +142,18 @@ pip install -r requirements.txt
 ### Step 2 — Start Ollama (local LLM server)
 ```bash
 OLLAMA_MODELS="/path/to/models" ollama serve
-ollama pull llama3.2
+ollama pull llama3.1:8b
 ```
 
 ### Step 3 — Run the Interactive Side-by-Side Tester
 ```bash
 cd Structural-Coder
-../.venv/bin/python benchmark/interactive_comparison.py --model llama3.2
+../.venv/bin/python benchmark/interactive_comparison.py --model llama3.1:8b
 ```
 
 ### Step 4 — Run the Full Batch Benchmark Report
 ```bash
-../.venv/bin/python benchmark/run_comparison.py --models llama3.2
+../.venv/bin/python benchmark/run_comparison.py --models llama3.1:8b
 ```
 
 ---

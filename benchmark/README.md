@@ -1,7 +1,7 @@
 # 🏆 `benchmark/` — Proof That Our System Wins
 
 This folder contains everything needed to **compare our system against AI chatbots**
-like llama3.2, codellama, etc. that you can download and run locally.
+like llama3.1:8b, codellama, etc. that you can download and run locally.
 
 ---
 
@@ -27,7 +27,7 @@ Each answer is graded on three things:
 | **Validity** | Does the code pass all 6 safety checks? | 1.0 |
 | **Final** | `0.4×retrieval + 0.6×(0.5×grounding + 0.5×validity)` | 1.0 |
 
-> **Important**: For the standalone LLM (llama3.2), retrieval = 0 because it cannot
+> **Important**: For the standalone LLM (llama3.1:8b), retrieval = 0 because it cannot
 > search any graph. It only knows what was in its training data.
 
 ---
@@ -38,12 +38,12 @@ Each answer is graded on three things:
 # 1. Make sure Ollama is running
 ollama serve
 
-# 2. Test against llama3.2 (already downloaded)
-python benchmark/run_comparison.py --models llama3.2
+# 2. Test against llama3.1:8b (already downloaded)
+python benchmark/run_comparison.py --models llama3.1:8b
 
 # 3. Test multiple models (if you download more)
 ollama pull codellama
-python benchmark/run_comparison.py --models llama3.2,codellama
+python benchmark/run_comparison.py --models llama3.1:8b,codellama
 ```
 
 ---
@@ -53,7 +53,7 @@ python benchmark/run_comparison.py --models llama3.2,codellama
 | System | Score |
 |--------|-------|
 | 🏆 Structural-Coder (Ours) | **0.75** |
-| llama3.2 (Standalone) | 0.24 |
+| llama3.1:8b (Standalone) | 0.24 |
 
 **We won all 10 / 10 queries.**
 

@@ -7,7 +7,7 @@ Compares two things head-to-head on PyTorch coding queries:
                 code validation).  Does NOT use any external LLM.  The model is
                 purely our knowledge-graph-based code scaffolding pipeline.
 
-  OPPONENT   — A plain Ollama model (e.g. llama3.2, codellama) with NO
+  OPPONENT   — A plain Ollama model (e.g. llama3.1:8b, codellama) with NO
                 retrieval context, NO validation, and NO self-healing.  The model
                 answers from its training-data memory alone.
 
@@ -15,10 +15,10 @@ Usage
 -----
   # Start Ollama first:   ollama serve
   # Then run:
-  python amitesh/run_comparison.py --models llama3.2
+  python amitesh/run_comparison.py --models llama3.1:8b
 
   # To test multiple models:
-  python amitesh/run_comparison.py --models llama3.2,codellama,mistral
+  python amitesh/run_comparison.py --models llama3.1:8b,codellama,mistral
 """
 import argparse
 import json
@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--edges",           default="data/edges.csv")
     p.add_argument("--embedding-cache", default="outputs/gnn_embeddings.jsonl")
     p.add_argument("--queries-file",    default="benchmark/queries/queries.json")
-    p.add_argument("--models",          default="llama3.2",
+    p.add_argument("--models",          default="llama3.1:8b",
                    help="Comma-separated list of Ollama models to test as opponents")
     p.add_argument("--top-k",           type=int, default=20)
     p.add_argument("--target-hardware", default="H100")
@@ -134,7 +134,7 @@ def main() -> None:
         # Generate using LLM with retrieved context
         our_result = pipeline._generate_answer_for_context(
             query=query, nodes=gnn_ctx.nodes,
-            model=opponents[0] if opponents else "llama3.2",
+            model=opponents[0] if opponents else "llama3.1:8b",
             use_ollama=True,
         )
         our_answer = our_result["answer"]

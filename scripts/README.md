@@ -38,7 +38,7 @@ python scripts/run_research_pipeline.py \
 | `--query` | `"compile-safe transformer block"` | Your coding question |
 | `--top-k` | 20 | How many results to retrieve |
 | `--epochs` | 20 | GNN training epochs |
-| `--ollama-model` | `llama3.2` | Which Ollama model to use |
+| `--ollama-model` | `llama3.1:8b` | Which Ollama model to use |
 
 
 ---
