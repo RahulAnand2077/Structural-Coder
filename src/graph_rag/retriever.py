@@ -99,6 +99,12 @@ class GraphRAGRetriever:
         # Ensure global anchors are strictly preserved at the top of context availability
         for nid in global_seeds:
             collected_nids.add(nid)
+        
+        # Also inject broader lexical matches to ensure named API nodes always appear
+        # even when topological neighbors are all unnamed endpoint pages
+        broad_lexical = self._global_lexical_search(query_tokens, max(top_k, 10))
+        for nid in broad_lexical:
+            collected_nids.add(nid)
 
         # --- Phase 3: Hybrid rank + select ---
         # Ranks all context combining Text Matches + Structural Proximity
@@ -147,8 +153,16 @@ class GraphRAGRetriever:
 
             # Topological Score bounds topological neighborhood clusters efficiently
             score = 1.0 * gnn_val + 2.0 * lexical + 0.05 * min(20.0, degree)
-            if self._is_api_like(node.label):
-                score += 0.4
+            # Strongly prefer callable APIs (Class/Function/Method) over doc endpoints
+            lbl = (node.label or "").lower()
+            if lbl in ("api_class", "api_function", "api_method"):
+                score += 1.0  # Strong boost for importable APIs
+            elif lbl == "pytorchconcept":
+                score += 0.3
+            elif lbl == "api_endpoint":
+                score -= 0.5  # Demote URL-only doc pages
+            if node.name.strip():
+                score += 0.5  # Prefer nodes with actual names
             ranked.append((nid, score))
 
         ranked.sort(key=lambda x: x[1], reverse=True)

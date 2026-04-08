@@ -76,19 +76,45 @@ class CsvFirstResearchPipeline:
             return StepReport(name="GNN Training", details={"status": "already_loaded"})
 
         if self.embedding_cache.exists():
+            display_names: dict[int, str] = {}
             if self.embedding_cache.suffix == ".jsonl":
                 from src.graph_rag.gnn_encoder import load_embeddings_from_jsonl
-                self._gnn_node_ids, self._gnn_embeddings = load_embeddings_from_jsonl(self.embedding_cache)
+                self._gnn_node_ids, self._gnn_embeddings, display_names = load_embeddings_from_jsonl(self.embedding_cache)
+            elif self.embedding_cache.suffix == ".pt":
+                from src.graph_rag.gnn_encoder import load_embeddings_from_pt
+                self._gnn_node_ids, self._gnn_embeddings, display_names = load_embeddings_from_pt(
+                    self.embedding_cache, self.nodes_csv
+                )
             else:
                 from src.graph_rag.gnn_encoder import load_embeddings
                 self._gnn_node_ids, self._gnn_embeddings = load_embeddings(self.embedding_cache)
+
+            # Enrich graph node names with fully-qualified display_names from the JSONL
+            # e.g. CSV has "SymInt" but JSONL has "torch.SymInt" — the LLM needs the full path
+            # Skip display_names that are URLs (API_Endpoint nodes store URLs as display_name)
+            enriched = 0
+            for nid, dn in display_names.items():
+                if dn.startswith("http://") or dn.startswith("https://"):
+                    continue  # Skip URL-based display names
+                node = self.graph.nodes.get(nid)
+                if node is None:
+                    continue
+                csv_name = node.name.strip()
+                # Only patch if display_name is richer (contains a dot = qualified Python path)
+                if "." in dn and (not csv_name or dn.endswith(csv_name)):
+                    node.name = dn
+                    enriched += 1
 
             self._gnn_retriever = GraphRAGRetriever(
                 graph=self.graph,
                 node_ids=self._gnn_node_ids,
                 embeddings=self._gnn_embeddings,
             )
-            return StepReport(name="GNN Training", details={"status": "loaded_from_cache", "cache_path": str(self.embedding_cache)})
+            return StepReport(name="GNN Training", details={
+                "status": "loaded_from_cache",
+                "cache_path": str(self.embedding_cache),
+                "nodes_enriched": enriched,
+            })
 
         tensor_data = build_graph_tensor_data(
             self.nodes_csv,

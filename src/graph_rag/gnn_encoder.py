@@ -348,10 +348,20 @@ def load_embeddings(path: str | Path) -> tuple[list[int], torch.Tensor]:
     embeddings = torch.tensor(payload["embeddings"], dtype=torch.float32)
     return node_ids, embeddings
 
-def load_embeddings_from_jsonl(path: str | Path) -> tuple[list[int], torch.Tensor]:
-    """Load embeddings from neo4j-style jsonl export."""
+def load_embeddings_from_jsonl(
+    path: str | Path,
+) -> tuple[list[int], torch.Tensor, dict[int, str]]:
+    """Load embeddings from neo4j-style jsonl export.
+    
+    Returns:
+        node_ids: list of integer node IDs
+        embeddings: tensor of shape [N, 256]
+        display_names: dict mapping node_id -> fully-qualified display name
+                       (e.g. 22715 -> "torch.SymInt")
+    """
     node_ids = []
     embeddings = []
+    display_names: dict[int, str] = {}
     with Path(path).open("r", encoding="utf-8") as f:
         for line in f:
             if not line.strip():
@@ -363,44 +373,50 @@ def load_embeddings_from_jsonl(path: str | Path) -> tuple[list[int], torch.Tenso
             emb = data["embedding"]
             node_ids.append(nid)
             embeddings.append(emb)
+            # Capture rich display_name (e.g. "torch.SymInt", "torch.nn.Module")
+            dn = data.get("display_name", "")
+            if dn:
+                display_names[nid] = dn
+
+    return node_ids, torch.tensor(embeddings, dtype=torch.float32), display_names
+
+
+def load_embeddings_from_pt(
+    pt_path: str | Path,
+    nodes_csv: str | Path,
+) -> tuple[list[int], torch.Tensor, dict[int, str]]:
+    """Load embeddings from the gnn_embeddings.pt dict-of-tensors format.
     
-    return node_ids, torch.tensor(embeddings, dtype=torch.float32)
-
-def load_query_encoder(
-    metadata_path: str | Path,
-    weights_path: str | Path,
-    in_channels: int = 128,
-    hidden_channels: int = 256,
-    out_channels: int = 256
-) -> HeteroGraphEncoder | None:
-    """Load the HeteroGraphEncoder for query embedding alignment."""
-    try:
-        mp = Path(metadata_path)
-        wp = Path(weights_path)
-        if not mp.exists() or not wp.exists():
-            return None
-
-        # metadata is expected to have 'node_types' and 'edge_types'
-        meta_dict = json.loads(mp.read_text(encoding="utf-8"))
-        node_types = meta_dict.get("node_types", ["PyTorchConcept"])
-        # edge_types from json comes as lists of 3 strings; convert to tuple
-        edge_types = [tuple(e) for e in meta_dict.get("edge_types", [])]
-        
-        model = HeteroGraphEncoder(
-            metadata=(node_types, edge_types),
-            in_channels=in_channels,
-            hidden_channels=hidden_channels,
-            out_channels=out_channels,
-        )
-        
-        state = torch.load(str(wp), map_location="cpu", weights_only=False)
-        # Handle dict from saving logic "model_state"
-        if isinstance(state, dict) and "model_state" in state:
-            state = state["model_state"]
-            
-        model.load_state_dict(state, strict=False)
-        model.eval()
-        return model
-    except Exception as e:
-        print(f"Warning: Failed to load query encoder: {e}")
-        return None
+    This is ~5x faster than parsing the 140MB JSONL file.
+    The PT file is keyed by node_type (e.g. "API_Class" -> Tensor[142, 256]).
+    We reconstruct node_ids by matching the CSV ordering per label group.
+    
+    Returns:
+        node_ids, embeddings, display_names (empty dict since PT has no names)
+    """
+    import csv as _csv
+    
+    emb_dict = torch.load(str(pt_path), map_location="cpu", weights_only=False)
+    
+    # Group CSV nodes by label, preserving order
+    grouped: dict[str, list[int]] = {}
+    with Path(nodes_csv).open("r", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            lbl = row.get("Label", "Unknown")
+            grouped.setdefault(lbl, []).append(int(row["Id"]))
+    
+    all_ids: list[int] = []
+    all_embs: list[torch.Tensor] = []
+    
+    for node_type, tensor in emb_dict.items():
+        csv_ids = grouped.get(node_type, [])
+        if len(csv_ids) != tensor.size(0):
+            print(f"Warning: PT {node_type} has {tensor.size(0)} vectors but CSV has {len(csv_ids)} nodes — skipping")
+            continue
+        all_ids.extend(csv_ids)
+        all_embs.append(tensor)
+    
+    if not all_embs:
+        raise ValueError("No embeddings loaded from PT file")
+    
+    return all_ids, torch.cat(all_embs, dim=0), {}
