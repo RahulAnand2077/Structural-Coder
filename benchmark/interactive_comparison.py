@@ -20,11 +20,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.research_pipeline.pipeline import CsvFirstResearchPipeline
+from src.config import MODEL_NAME
 from benchmark.run_comparison import call_ollama  # Reusing the raw Ollama caller
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive Head-to-Head Comparison")
-    parser.add_argument("--model", default="llama3.1:8b", help="Which Ollama model to use for generation")
+    parser.add_argument("--model", default=MODEL_NAME, help="Which Ollama model to use for generation")
     args = parser.parse_args()
     model = args.model
 

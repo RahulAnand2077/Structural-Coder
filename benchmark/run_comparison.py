@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent   # Structural-Coder-mohit/
 sys.path.insert(0, str(ROOT))
 
 from src.research_pipeline.pipeline import CsvFirstResearchPipeline
+from src.config import MODEL_NAME
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--edges",           default="data/edges.csv")
     p.add_argument("--embedding-cache", default="outputs/gnn_embeddings.jsonl")
     p.add_argument("--queries-file",    default="benchmark/queries/queries.json")
-    p.add_argument("--models",          default="llama3.1:8b",
+    p.add_argument("--models",          default=MODEL_NAME,
                    help="Comma-separated list of Ollama models to test as opponents")
     p.add_argument("--top-k",           type=int, default=20)
     p.add_argument("--target-hardware", default="H100")
@@ -134,7 +135,7 @@ def main() -> None:
         # Generate using LLM with retrieved context
         our_result = pipeline._generate_answer_for_context(
             query=query, nodes=gnn_ctx.nodes,
-            model=opponents[0] if opponents else "llama3.1:8b",
+            model=opponents[0] if opponents else MODEL_NAME,
             use_ollama=True,
         )
         our_answer = our_result["answer"]

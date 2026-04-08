@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
+from src.config import MODEL_NAME
 from src.graph_rag.gnn_encoder import (
     build_graph_tensor_data,
     save_embeddings,
@@ -151,7 +152,7 @@ class CsvFirstResearchPipeline:
     def step4_ollama_integration(
         self,
         query: str,
-        model: str = "llama3.1:8b",
+        model: str = MODEL_NAME,
         top_k: int = 20,
         seed_k: int = 4,
         expansion_hops: int = 1,
@@ -183,7 +184,7 @@ class CsvFirstResearchPipeline:
         self,
         queries: Iterable[str],
         top_k: int = 20,
-        model: str = "llama3.1:8b",
+        model: str = MODEL_NAME,
         target_hardware: str = "H100",
         use_ollama: bool = True,
         retrieval_weight: float = 0.4,
@@ -310,7 +311,7 @@ class CsvFirstResearchPipeline:
         self,
         queries: Iterable[str],
         top_k: int = 20,
-        model: str = "llama3.1:8b",
+        model: str = MODEL_NAME,
         target_hardware: str = "H100",
     ) -> dict:
         baseline = self.step5_ablation_study(
@@ -352,7 +353,7 @@ class CsvFirstResearchPipeline:
         self,
         query: str,
         queries_for_ablation: Iterable[str],
-        model: str = "llama3.1:8b",
+        model: str = MODEL_NAME,
         hidden_dim: int = 128,
         out_dim: int = 96,
         epochs: int = 20,
