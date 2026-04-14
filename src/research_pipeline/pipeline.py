@@ -14,6 +14,7 @@ from src.graph_rag.gnn_encoder import (
     save_embeddings,
     train_gnn_embeddings,
 )
+from src.graph_rag.query_encoder import GNNQueryPredictor
 from src.graph_rag.retriever import GraphRAGRetriever
 from src.integration_pipeline.graph_loader import CsvGraph, Node
 from src.integration_pipeline.retriever import GraphRetriever
@@ -40,6 +41,7 @@ class CsvFirstResearchPipeline:
         self._gnn_node_ids: list[int] | None = None
         self._gnn_embeddings = None
         self._gnn_retriever: GraphRAGRetriever | None = None
+        self._gnn_predictor: GNNQueryPredictor | None = None
         self.validator = ActiveValidator()
 
     def step1_data_scrape(self) -> StepReport:
@@ -148,6 +150,74 @@ class CsvFirstResearchPipeline:
             "status": "newly_trained",
         }
         return StepReport(name="GNN Training", details=details)
+
+    # ── GNN Prediction + LLM (System B) ─────────────────────────────
+
+    def gnn_llm_generate(
+        self,
+        query: str,
+        model: str = MODEL_NAME,
+        top_k: int = 10,
+    ) -> dict:
+        """System B: GNN predicts the API path → LLM generates code with context.
+        
+        1. GNN model (best_model.pt) predicts which API nodes match the query
+        2. Predicted nodes are formatted as context
+        3. LLM generates code using that context
+        """
+        self._ensure_gnn_predictor()
+        assert self._gnn_predictor is not None
+        
+        # GNN predicts the path
+        path = self._gnn_predictor.predict_path(query, top_k=top_k, graph=self.graph)
+        path_nodes = []
+        for nid, score in path.nodes:
+            if nid in self.graph.nodes:
+                path_nodes.append(self.graph.nodes[nid])
+        
+        # Build prompt with GNN-predicted context
+        prompt = self._build_ollama_prompt(query, path_nodes)
+        answer, source = self._call_ollama(prompt=prompt, model=model)
+        
+        return {
+            "query": query,
+            "model": model,
+            "source": source,
+            "predicted_path": [(nid, f"{score:.3f}") for nid, score in path.nodes],
+            "path_node_names": [n.name for n in path_nodes],
+            "answer": answer,
+        }
+
+    def standalone_generate(
+        self,
+        query: str,
+        model: str = MODEL_NAME,
+    ) -> dict:
+        """System A: Standalone LLM generation with zero context."""
+        prompt = (
+            "You are a PyTorch 2.x coding assistant.\n"
+            f"User query: {query}\n\n"
+            "Write complete, runnable Python code with proper imports.\n"
+            "Use ```python code blocks for your code."
+        )
+        answer, source = self._call_ollama(prompt=prompt, model=model)
+        return {
+            "query": query,
+            "model": model,
+            "source": source,
+            "answer": answer,
+        }
+
+    def _ensure_gnn_predictor(self) -> None:
+        if self._gnn_predictor is None:
+            from pathlib import Path as _P
+            model_path = _P(self.embedding_cache).parent / "best_model.pt"
+            embeddings_pt = _P(self.embedding_cache).parent / "gnn_embeddings.pt"
+            self._gnn_predictor = GNNQueryPredictor(
+                model_path=str(model_path),
+                embeddings_pt=str(embeddings_pt),
+                nodes_csv=str(self.nodes_csv),
+            )
 
     def step4_ollama_integration(
         self,

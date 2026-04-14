@@ -1,312 +1,137 @@
 """
 run_comparison.py
 =================
-Compares two things head-to-head on PyTorch coding queries:
+Batch benchmark: System A (Standalone LLM) vs System B (GNN + LLM)
+Runs all queries from queries.json and produces comparison report.
 
-  OUR MODEL  — Structural-Coder (Graph-RAG retrieval + GNN embeddings + active
-                code validation).  Does NOT use any external LLM.  The model is
-                purely our knowledge-graph-based code scaffolding pipeline.
-
-  OPPONENT   — A plain Ollama model (e.g. llama3.1:8b, codellama) with NO
-                retrieval context, NO validation, and NO self-healing.  The model
-                answers from its training-data memory alone.
-
-Usage
------
-  # Start Ollama first:   ollama serve
-  # Then run:
-  python amitesh/run_comparison.py --models llama3.1:8b
-
-  # To test multiple models:
-  python amitesh/run_comparison.py --models llama3.1:8b,codellama,mistral
+Usage:
+  python benchmark/run_comparison.py --model llama3.1:8b
 """
+
 import argparse
 import json
-import os
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-# ──────────────────────────────────────────────────
-# Make sure the project root is on sys.path so we
-# can import from src/ regardless of where we run.
-# ──────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parent.parent   # Structural-Coder-mohit/
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.research_pipeline.pipeline import CsvFirstResearchPipeline
 from src.config import MODEL_NAME
+from src.pipeline import Pipeline
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def call_ollama(prompt: str, model: str) -> str:
-    """Send a raw prompt to Ollama and return the text response."""
-    payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
-    req = urllib.request.Request(
-        url="http://127.0.0.1:11434/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req) as r:
-            body = json.loads(r.read().decode())
-        text = body.get("response", "").strip()
-        return text or "Ollama returned empty response."
-    except Exception as exc:
-        return f"[Ollama ERROR] {type(exc).__name__}: {exc}"
-
-
-SEPARATOR = "═" * 82
-
-
-def print_row(model: str, mode: str, grounding: float, validity: float,
-              final: float, latency: float) -> None:
-    print(f"  {model:<18} │ {mode:<18} │ {grounding:>9.2f} │ {validity:>8.2f} │ {final:>6.2f} │ {latency:>6.1f}s")
-
-
-def print_header() -> None:
-    print(f"  {'Model':<18} │ {'Mode':<18} │ {'Grounding':>9} │ {'Validity':>8} │ {'Final':>6} │ {'Latency':>7}")
-    print("  " + "─"*18 + "┼" + "─"*20 + "┼" + "─"*11 + "┼" + "─"*10 + "┼" + "─"*8 + "┼" + "─"*8)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────────────────────────────────────
-
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Structural-Coder vs Standalone Ollama Benchmark")
-    p.add_argument("--nodes",           default="data/nodes.csv")
-    p.add_argument("--edges",           default="data/edges.csv")
-    p.add_argument("--embedding-cache", default="outputs/gnn_embeddings.jsonl")
-    p.add_argument("--queries-file",    default="benchmark/queries/queries.json")
-    p.add_argument("--models",          default=MODEL_NAME,
-                   help="Comma-separated list of Ollama models to test as opponents")
-    p.add_argument("--top-k",           type=int, default=20)
-    p.add_argument("--target-hardware", default="H100")
-    p.add_argument("--output-json",   default="benchmark/outputs/comparison.json")
-    p.add_argument("--output-report", default="benchmark/outputs/comparison_report.md")
-    return p
+SEPARATOR = "═" * 80
 
 
 def main() -> None:
-    args = build_parser().parse_args()
-    opponents = [m.strip() for m in args.models.split(",") if m.strip()]
-    queries   = json.loads(Path(args.queries_file).read_text(encoding="utf-8"))
+    parser = argparse.ArgumentParser(description="System A vs System B Batch Benchmark")
+    parser.add_argument("--model", default=MODEL_NAME, help="Ollama model")
+    parser.add_argument("--queries-file", default="benchmark/queries/queries.json")
+    parser.add_argument("--output-json", default="benchmark/outputs/comparison.json")
+    parser.add_argument("--output-report", default="benchmark/outputs/comparison_report.md")
+    args = parser.parse_args()
+
+    queries = json.loads(Path(args.queries_file).read_text(encoding="utf-8"))
 
     print(SEPARATOR)
-    print("  STRUCTURAL-CODER (Graph-RAG) vs Standalone Ollama Models")
-    print(SEPARATOR)
-    print(f"  Queries  : {len(queries)}")
-    print(f"  Opponents: {', '.join(opponents)}")
+    print("  System A (Standalone LLM) vs System B (GNN + LLM)")
+    print(f"  Model: {args.model} | Queries: {len(queries)}")
     print(SEPARATOR)
 
-    # ── 1. Initialise OUR pipeline ─────────────────────────────────────────
-    print("\n[Step 1] Loading graph and training GNN embeddings…")
-    pipeline = CsvFirstResearchPipeline(
-        nodes_csv=str(ROOT / args.nodes),
-        edges_csv=str(ROOT / args.edges),
-        embedding_cache=str(ROOT / args.embedding_cache),
-    )
-    t_gnn_start = time.time()
-    pipeline.step3_gnn_training()
-    t_gnn = time.time() - t_gnn_start
-    print(f"         GNN training done in {t_gnn:.1f}s.")
+    pipe = Pipeline()
+    results = []
 
-    results: list[dict] = []
+    for qi, query in enumerate(queries, 1):
+        print(f"\n{'─'*80}")
+        print(f"  [{qi}/{len(queries)}] \"{query}\"")
+        print(f"{'─'*80}")
 
-    # ── 2. Run benchmark ───────────────────────────────────────────────────
-    for query in queries:
-        print(f"\n{SEPARATOR}")
-        print(f"  Query: \"{query}\"")
-        print(SEPARATOR)
-        print_header()
+        result = pipe.compare(query, model=args.model)
+        a = result["system_a"]
+        b = result["system_b"]
 
-        # ── 2a. OUR MODEL: Graph-RAG retrieval + LLM generation ────────────
-        t0  = time.time()
-        gnn_ctx = pipeline._gnn_retriever.retrieve(
-            query=query, top_k=args.top_k, seed_k=4, expansion_hops=1
-        )
-        # Generate using LLM with retrieved context
-        our_result = pipeline._generate_answer_for_context(
-            query=query, nodes=gnn_ctx.nodes,
-            model=opponents[0] if opponents else MODEL_NAME,
-            use_ollama=True,
-        )
-        our_answer = our_result["answer"]
-        our_grounding  = pipeline._grounding_score(our_answer, gnn_ctx.nodes, query=query)
-        our_validity   = pipeline._code_validity_score(our_answer, target_hardware=args.target_hardware)
-        retrieval_score = pipeline._token_hit_score(query, gnn_ctx.nodes)
-        our_generation  = 0.5 * our_grounding + 0.5 * our_validity
-        our_final       = 0.4 * retrieval_score + 0.6 * our_generation
-        t1  = time.time()
+        print(f"  [A] Val: {a['validity']*100:.0f}% | Final: {a['final_score']*100:.0f}% ({a['latency_sec']}s)")
+        print(f"  [B] Ret: {b['retrieval']*100:.0f}% | Grnd: {b['grounding']*100:.0f}% | Val: {b['validity']*100:.0f}% | Final: {b['final_score']*100:.0f}% ({b['latency_sec']}s)")
+        print(f"      GNN Path: {', '.join(b.get('gnn_path', [])[:3])}")
+        print(f"      Winner: {result['winner']}")
 
-        print_row("Structural-Coder", "Ours (Graph-RAG)",
-                  our_grounding, our_validity, our_final, t1 - t0)
+        results.append(result)
 
-        results.append({
-            "query": query,
-            "model": "Structural-Coder",
-            "mode": "Ours (Graph-RAG)",
-            "retrieval_score": retrieval_score,
-            "grounding": our_grounding,
-            "validity": our_validity,
-            "final_score": our_final,
-            "latency_sec": t1 - t0,
-            "seeds_used": gnn_ctx.seed_nodes,
-            "nodes_retrieved": len(gnn_ctx.nodes),
-            "answer_preview": our_answer[:120].replace("\n", " "),
-        })
+    # ── Summary ──────────────────────────────────────────────────────
+    a_scores = [r["system_a"]["final_score"] for r in results]
+    b_scores = [r["system_b"]["final_score"] for r in results]
+    avg = lambda v: sum(v)/len(v) if v else 0.0
 
-        # ── 2b. OPPONENT: raw Ollama LLM (no context, no validation) ──────
-        for model in opponents:
-            # Minimal prompt — just the plain user question, no RAG context
-            raw_prompt = (
-                f"You are a PyTorch 2.x expert. Answer the following coding question "
-                f"with working code only:\n\n{query}"
-            )
+    wins_b = sum(1 for r in results if r["winner"] == "B")
+    wins_a = sum(1 for r in results if r["winner"] == "A")
+    ties = sum(1 for r in results if r["winner"] == "TIE")
 
-            t2  = time.time()
-            std_answer   = call_ollama(raw_prompt, model)
-            std_grounding = pipeline._grounding_score(std_answer, gnn_ctx.nodes, query=query)
-            std_validity  = pipeline._code_validity_score(std_answer, target_hardware=args.target_hardware)
-            std_final     = 0.0 * 0.4 + 0.6 * (0.5 * std_grounding + 0.5 * std_validity)  # retrieval = 0
-            t3  = time.time()
-
-            print_row(model, "Standalone LLM",
-                      std_grounding, std_validity, std_final, t3 - t2)
-
-            results.append({
-                "query": query,
-                "model": model,
-                "mode": "Standalone LLM",
-                "retrieval_score": 0.0,
-                "grounding": std_grounding,
-                "validity": std_validity,
-                "final_score": std_final,
-                "latency_sec": t3 - t2,
-                "seeds_used": [],
-                "nodes_retrieved": 0,
-                "answer_preview": std_answer[:120].replace("\n", " "),
-            })
-
-    # ── 3. Print summary table ─────────────────────────────────────────────
-    print(f"\n\n{SEPARATOR}")
-    print("  SUMMARY — Average scores across all queries")
+    print(f"\n{SEPARATOR}")
+    print("  SUMMARY")
+    print(f"{SEPARATOR}")
+    print(f"  Avg Final Score — A: {avg(a_scores)*100:.0f}% | B: {avg(b_scores)*100:.0f}%")
+    print(f"  Wins — B: {wins_b} | A: {wins_a} | Ties: {ties}")
     print(SEPARATOR)
-    print(f"  {'System':<30} │ {'Grnd':>6} │ {'Valid':>6} │ {'Final':>6}")
-    print("  " + "─"*30 + "┼" + "─"*8 + "┼" + "─"*8 + "┼" + "─"*8)
 
-    def avg(vals): return sum(vals)/len(vals) if vals else 0.0
-
-    modes = {}
+    # ── Save outputs ─────────────────────────────────────────────────
+    # Strip verbose answers for JSON
+    save_results = []
     for r in results:
-        key = f"{r['model']} ({r['mode']})"
-        if key not in modes:
-            modes[key] = {"g": [], "v": [], "f": []}
-        modes[key]["g"].append(r["grounding"])
-        modes[key]["v"].append(r["validity"])
-        modes[key]["f"].append(r["final_score"])
+        sr = {"query": r["query"], "winner": r["winner"]}
+        for key in ("system_a", "system_b"):
+            sr[key] = {k: v for k, v in r[key].items() if k != "answer"}
+        save_results.append(sr)
 
-    for name, data in modes.items():
-        print(f"  {name:<30} │ {avg(data['g']):>6.2f} │ {avg(data['v']):>6.2f} │ {avg(data['f']):>6.2f}")
-
-    print(SEPARATOR)
-
-    # ── 4. Win/Loss per model ──────────────────────────────────────────────
-    print("\n  WIN / LOSS (Ours vs each Ollama model)")
-    print(f"  {'Opponent':<20} │ {'Ours Win':>8} │ {'Opp Win':>8} │ {'Tie':>5}")
-    print("  " + "─"*20 + "┼" + "─"*10 + "┼" + "─"*10 + "┼" + "─"*7)
-    our_results = {r["query"]: r for r in results if r["mode"] == "Ours (Graph-RAG)"}
-    for opp in opponents:
-        opp_results = {r["query"]: r for r in results if r["model"] == opp}
-        w = l = t = 0
-        for q in queries:
-            our_f = our_results.get(q, {}).get("final_score", 0)
-            opp_f = opp_results.get(q, {}).get("final_score", 0)
-            if our_f > opp_f + 0.01:   w += 1
-            elif opp_f > our_f + 0.01: l += 1
-            else:                       t += 1
-        print(f"  {opp:<20} │ {w:>8} │ {l:>8} │ {t:>5}")
-
-    print(SEPARATOR)
-
-    # ── 5. Save outputs ────────────────────────────────────────────────────
-    out_json = ROOT / args.output_json
+    out_json = Path(args.output_json)
     out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(json.dumps(results, indent=2))
+    out_json.write_text(json.dumps(save_results, indent=2))
 
-    out_md = ROOT / args.output_report
-    out_md.write_text(_markdown_report(results, queries, opponents, modes))
+    out_md = Path(args.output_report)
+    out_md.write_text(_markdown_report(results, args.model, avg, wins_a, wins_b, ties))
 
-    print(f"\n  Saved JSON : {out_json}")
-    print(f"  Saved Report: {out_md}\n")
+    print(f"\n  Saved: {out_json}")
+    print(f"  Saved: {out_md}\n")
 
 
-def _markdown_report(results, queries, opponents, modes) -> str:
-    def avg(vals): return sum(vals)/len(vals) if vals else 0.0
+def _markdown_report(results, model, avg, wins_a, wins_b, ties) -> str:
+    a_scores = [r["system_a"]["final_score"] for r in results]
+    b_scores = [r["system_b"]["final_score"] for r in results]
+    a_val = [r["system_a"]["validity"] for r in results]
+    b_val = [r["system_b"]["validity"] for r in results]
+    b_ret = [r["system_b"]["retrieval"] for r in results]
+    b_grnd = [r["system_b"]["grounding"] for r in results]
 
     lines = [
-        "# Structural-Coder Graph-RAG vs Standalone Ollama LLMs",
+        "# Standalone LLM vs GNN + LLM — Benchmark Report", "",
+        "## Setup", "",
+        f"- **Model**: {model}",
+        f"- **Queries**: {len(results)}",
+        f"- **Graph**: 24,485 nodes, 47,958 edges", "",
+        "## Average Scores", "",
+        "| System | Retrieval | Grounding | Validity | Final |",
+        "|--------|-----------|-----------|----------|-------|",
+        f"| A: Standalone | — | — | {avg(a_val)*100:.0f}% | {avg(a_scores)*100:.0f}% |",
+        f"| B: GNN + LLM | {avg(b_ret)*100:.0f}% | {avg(b_grnd)*100:.0f}% | {avg(b_val)*100:.0f}% | {avg(b_scores)*100:.0f}% |",
         "",
-        "## What We Compared",
-        "",
-        "| | Structural-Coder (Ours) | Standalone Ollama |",
-        "|---|---|---|",
-        "| **Retrieval** | Graph-RAG + GNN (24K-node graph) | ❌ None |",
-        "| **Validation** | C0–C5 active code checks | ❌ None |",
-        "| **Self-healing** | Automatic fix loop | ❌ None |",
-        "| **LLM** | ❌ Not used — pure graph retrieval | ✅ Full Ollama model |",
-        "",
-        "## Average Scores",
-        "",
-        "| System | Grounding | Validity | Final Score |",
-        "|--------|-----------|----------|-------------|",
+        f"**Wins**: B={wins_b} | A={wins_a} | Ties={ties}", "",
+        "## Per-Query Results", "",
     ]
 
-    for name, data in modes.items():
-        lines.append(f"| {name} | {avg(data['g']):.2f} | {avg(data['v']):.2f} | {avg(data['f']):.2f} |")
-
-    lines += ["", "## Win/Loss Analysis", "", "| Opponent | Ours (🏆) | Opp Won | Ties |", "|----------|-----------|---------|------|"]
-    our_results = {r["query"]: r for r in results if r["mode"] == "Ours (Graph-RAG)"}
-    for opp in opponents:
-        opp_results = {r["query"]: r for r in results if r["model"] == opp}
-        w = l = t = 0
-        for q in queries:
-            our_f = our_results.get(q, {}).get("final_score", 0)
-            opp_f = opp_results.get(q, {}).get("final_score", 0)
-            if our_f > opp_f + 0.01:   w += 1
-            elif opp_f > our_f + 0.01: l += 1
-            else:                       t += 1
-        lines.append(f"| {opp} | {w} | {l} | {t} |")
-
-    lines += ["", "## Per-Query Results", ""]
-    for q in queries:
-        lines.append(f"### `{q}`")
-        lines.append("")
-        our_r = our_results.get(q)
-        if our_r:
-            lines.append(f"- **Structural-Coder (Graph-RAG):** Final=**{our_r['final_score']:.2f}** | Grnd={our_r['grounding']:.2f} | Valid={our_r['validity']:.2f} | Seeds: {our_r['seeds_used'][:3]}")
-        for opp in opponents:
-            opp_r = next((r for r in results if r["model"] == opp and r["query"] == q), None)
-            if opp_r:
-                delta = (our_r["final_score"] - opp_r["final_score"]) if our_r else 0
-                emoji = "🏆 Ours" if delta > 0.01 else ("🏅 Opp" if delta < -0.01 else "Tie")
-                lines.append(f"- **{opp} (Standalone):** Final={opp_r['final_score']:.2f} | Grnd={opp_r['grounding']:.2f} | Valid={opp_r['validity']:.2f} → {emoji} (+{delta:+.2f})")
+    for r in results:
+        a = r["system_a"]
+        b = r["system_b"]
+        delta = b["final_score"] - a["final_score"]
+        emoji = "🏆 B" if r["winner"] == "B" else ("🏅 A" if r["winner"] == "A" else "🤝 Tie")
+        lines.append(f"### `{r['query']}`")
+        lines.append(f"- **A**: Final={a['final_score']*100:.0f}% | Val={a['validity']*100:.0f}%")
+        lines.append(f"- **B**: Final={b['final_score']*100:.0f}% | Ret={b['retrieval']*100:.0f}% | Grnd={b['grounding']*100:.0f}% | Val={b['validity']*100:.0f}%")
+        if b.get("gnn_path"):
+            lines.append(f"  - GNN Path: {', '.join(b['gnn_path'])}")
+        lines.append(f"  - **{emoji}** (Δ={delta:+.0%})")
         lines.append("")
 
     return "\n".join(lines)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    main()

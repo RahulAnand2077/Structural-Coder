@@ -1,3 +1,1 @@
-from .pipeline import CombinedPipeline
-
-__all__ = ["CombinedPipeline"]
+# Integration Pipeline — graph_loader, retriever, validator
