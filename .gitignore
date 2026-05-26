@@ -1,4 +1,35 @@
-﻿!outputs/.gitkeep
+# Virtual environments
+.venv/
+.venv311/
+venv/
+env/
+
+# Python bytecode
 __pycache__/
 *.pyc
-.venv
+*.pyo
+*.py[codz]
+
+# Runtime artifacts (regenerable)
+outputs/
+artifacts/
+datasets/
+!outputs/.gitkeep
+!outputs/*.pt
+!outputs/*.jsonl
+!outputs/*.json
+
+# Pytest cache
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+._*
+Thumbs.db
+
+# Jupyter checkpoints
+.ipynb_checkpoints/

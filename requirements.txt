@@ -1,4 +1,11 @@
-﻿neo4j>=5.0
+# Core ML framework
 torch>=2.0
 torch-geometric>=2.4
+
+# Graph database
+neo4j>=5.0
+
+# Utilities
 typing_extensions>=4.8
+networkx>=2.5
+numpy>=1.21
