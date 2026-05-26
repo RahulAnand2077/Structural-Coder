@@ -228,5 +228,5 @@ The **GNN Encoder** and the **Integration Pipeline** are strictly decoupled. You
 ## 👤 Authors
 
 - **Amitesh Sinha** — Benchmarking, Pipeline Integration, Evaluation Engine
-- **Rahul Anand** — GNN Architecture (`gnn_encoder_improved.ipynb`)
+- **Rahul Anand** — GNN Architecture
 - **Mohit** — Validation Pipeline, Data Engineering
